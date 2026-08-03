@@ -589,13 +589,27 @@ a{color:inherit;text-decoration:none;}
             <div class="card"><div class="clbl">Plataforma</div>
               <div class="fg"><label>Prefixo Company ID</label><input id="cfg_prefix" value="YLG"></div>
               <div class="fg"><label>Modo de Dados</label><input id="cfg_modo" disabled></div>
-              <p class="hint">O modo (Supabase/Offline) é definido em platform-config.js.</p>
+              <p class="hint">O modo (Supabase/Offline) é detectado automaticamente na abertura da Platform.</p>
+            </div>
+            <div class="card"><div class="clbl">Diagnóstico Supabase</div>
+              <div style="font-size:12px;line-height:2.1;margin-bottom:14px;">
+                <div>Status Supabase: <b id="diagStatusSupabase">—</b></div>
+                <div>Status Offline: <b id="diagStatusOffline">—</b></div>
+                <div>Última sincronização: <b id="diagUltimaSync" style="font-family:var(--mono);">—</b></div>
+                <div>Registros locais: <b id="diagRegistrosLocais" style="font-family:var(--mono);">—</b></div>
+                <div>Registros na nuvem: <b id="diagRegistrosNuvem" style="font-family:var(--mono);">—</b></div>
+                <div>Fila pendente: <b id="diagFilaPendente" style="font-family:var(--mono);">—</b></div>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-o btn-sm" onclick="testarConexaoEAtualizar()">Testar Conexão</button>
+                <button class="btn btn-p btn-sm" onclick="sincronizarAgoraEAtualizar()">Sincronizar Agora</button>
+              </div>
             </div>
             <div class="card">
               <div class="clbl">Zona de Risco</div>
               <p style="font-size:12px;color:var(--w40);margin-bottom:14px;">
                 Apaga todos os dados locais da Platform (empresas, usuários, licenças, módulos, logs)
-                e recria o Super Admin automaticamente a partir do platform-config.js.
+                e recria o Super Admin automaticamente a partir da configuração no início do arquivo.
               </p>
               <button class="btn btn-r" style="width:100%;justify-content:center;" onclick="resetarAmbiente()">&#9888; Resetar Ambiente</button>
             </div>
@@ -675,6 +689,11 @@ a{color:inherit;text-decoration:none;}
   <button class="btn btn-p" style="width:100%;justify-content:center;" onclick="salvarLicenca()">Salvar Licença</button>
 </div></div>
 
+<!-- SDK do Supabase (Sprint YALOG-PLATFORM-002). Carregado via CDN — se
+     não houver internet ou o CDN estiver bloqueado, window.supabase
+     simplesmente não existe e a Platform cai para localStorage. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <script>
 /* ═══════════════════════════════════════════════════════════════════
    CONFIGURAÇÃO — conteúdo de platform-config.js embutido
@@ -684,22 +703,40 @@ a{color:inherit;text-decoration:none;}
    ───────────────────────────────────────────────────────────────
    Configuração central da YALog Platform.
 
-   A Platform funciona 100% OFFLINE por padrão (localStorage).
-   Nenhuma dependência obrigatória de Supabase ou internet.
-   O Supabase é opcional e fica preparado para quando o ecossistema
-   (multiempresa, licenciamento, portal central) for habilitado.
+   Sprint YALOG-PLATFORM-003 — Integração Completa: a Platform grava
+   diretamente no Supabase (empresas, usuários, licenças — agora em
+   tabela própria —, módulos, logs). Se a conexão cair, usa localStorage
+   automaticamente, enfileira as gravações pendentes numa fila local e
+   sincroniza sozinha assim que a conexão volta — sem que o usuário
+   perceba a troca. Veja testarConexaoSupabase(), withFallback(),
+   enfileirar() e processarFilaSync() mais abaixo.
+
+   Esquema de tabelas (PKs, FKs, índices, created_at/updated_at via
+   trigger) e as Policies de RLS (SELECT/INSERT/UPDATE/DELETE
+   independentes — mesmo padrão adotado no WMS, nunca FOR ALL) estão
+   em platform-schema.sql, entregue junto com este index.html. Execute
+   esse script uma vez no SQL Editor do projeto Supabase antes de usar
+   a Platform em modo online.
    ═══════════════════════════════════════════════════════════════ */
 
 const YALOG_CONFIG = {
-  // ⬇ Preencha somente quando for habilitar o Supabase (opcional/futuro)
-  SUPABASE_URL: 'https://SEU-PROJETO.supabase.co',
-  SUPABASE_ANON_KEY: 'SUA-ANON-KEY-AQUI',
+  // Projeto Supabase da YALog Platform (Sprint YALOG-PLATFORM-003).
+  //   Project URL             → SUPABASE_URL
+  //   Publishable key (anon)  → SUPABASE_ANON_KEY
+  //   NUNCA use a Service Role / Secret Key aqui — este arquivo roda
+  //   inteiramente no navegador do usuário.
+  SUPABASE_URL: 'https://pyckcyaojztixsujbylq.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_iHBh-BZsjisQc0i09QUDoQ_9mZl1vfk',
 
   COMPANY_PREFIX: 'YLG',
 
-  // A Platform roda OFFLINE por padrão (localStorage).
-  // Só mude para false quando o Supabase estiver configurado acima.
-  OFFLINE_MODE: true,
+  // A Platform detecta sozinha se o Supabase está disponível:
+  //  • URL/chave preenchidas + conexão responde  → modo SUPABASE
+  //  • Caso contrário (não configurado, sem internet, erro de rede,
+  //    tabela ausente etc.) → cai automaticamente para localStorage
+  // FORCAR_OFFLINE força localStorage mesmo com Supabase configurado
+  // (útil para testes locais / demonstrações offline).
+  FORCAR_OFFLINE: false,
 
   // ═══════════════════════════════════════════════════════════════
   // SUPER ADMIN — único acesso inicial à Platform.
@@ -719,11 +756,20 @@ const YALOG_CONFIG = {
   },
 };
 
-// A Platform NÃO carrega o SDK do Supabase por padrão — assim não há
-// qualquer dependência de internet, CDN ou servidor no modo offline.
-// O cliente só é criado se OFFLINE_MODE for false E o SDK estiver presente.
+// ═══════════════════════════════════════════════════════════════
+// CONEXÃO SUPABASE — criação do cliente + detecção automática
+// (Sprint YALOG-PLATFORM-002)
+// ═══════════════════════════════════════════════════════════════
 let supabaseClient = null;
-if (!YALOG_CONFIG.OFFLINE_MODE) {
+let SUPABASE_ONLINE = false; // atualizado por testarConexaoSupabase() no init()
+
+function supabaseConfigurado(){
+  const url=YALOG_CONFIG.SUPABASE_URL||'';
+  const key=YALOG_CONFIG.SUPABASE_ANON_KEY||'';
+  return !!url && !!key && !url.includes('SEU-PROJETO') && !key.includes('SUA-ANON-KEY');
+}
+
+if (!YALOG_CONFIG.FORCAR_OFFLINE && supabaseConfigurado()) {
   try {
     if (typeof window !== 'undefined' && window.supabase && window.supabase.createClient) {
       supabaseClient = window.supabase.createClient(
@@ -731,12 +777,29 @@ if (!YALOG_CONFIG.OFFLINE_MODE) {
         YALOG_CONFIG.SUPABASE_ANON_KEY
       );
     } else {
-      console.warn('[YALOG] SDK do Supabase não carregado. Mantendo modo offline.');
-      YALOG_CONFIG.OFFLINE_MODE = true;
+      console.warn('[YALOG] SDK do Supabase não carregado (sem internet ou CDN bloqueado). Operando offline.');
     }
   } catch (e) {
-    console.error('[YALOG] Erro ao iniciar Supabase — mantendo modo offline:', e);
-    YALOG_CONFIG.OFFLINE_MODE = true;
+    console.error('[YALOG] Erro ao iniciar cliente Supabase — operando offline:', e);
+  }
+}
+
+// Testa se o Supabase realmente responde (URL/chave corretas, tabelas
+// existentes, internet disponível). Roda uma única vez no init(), com
+// timeout curto, para não travar a tela de login caso a conexão esteja
+// lenta ou indisponível. Resultado fica em SUPABASE_ONLINE, usado por OFF().
+async function testarConexaoSupabase(){
+  if (YALOG_CONFIG.FORCAR_OFFLINE || !supabaseClient) { SUPABASE_ONLINE=false; return; }
+  try{
+    const teste=supabaseClient.from('empresas').select('*',{count:'exact',head:true});
+    const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),4000));
+    const {error}=await Promise.race([teste,timeout]);
+    if(error) throw error;
+    SUPABASE_ONLINE=true;
+    console.log('%cYALog Platform — MODO SUPABASE (online)','color:#4ade80;font-weight:bold;');
+  }catch(e){
+    SUPABASE_ONLINE=false;
+    console.warn('[YALOG] Supabase indisponível, operando com localStorage:', e.message||e);
   }
 }
 </script>
@@ -857,67 +920,172 @@ if(typeof window!=='undefined'&&window.addEventListener) window.addEventListener
 // ═══════════════════════════════════════════════════════════════
 // CAMADA DE DADOS (Supabase ↔ localStorage)
 // ═══════════════════════════════════════════════════════════════
-const OFF = ()=>YALOG_CONFIG.OFFLINE_MODE;
+const OFF = ()=> !SUPABASE_ONLINE;
 const LS = {
   get(k){ return JSON.parse(localStorage.getItem('yalog_'+k)||'[]'); },
   set(k,v){ localStorage.setItem('yalog_'+k, JSON.stringify(v)); },
 };
 
+// ═══════════════════════════════════════════════════════════════
+// FILA DE SINCRONIZAÇÃO (Sprint YALOG-PLATFORM-003)
+// Toda gravação que cai para o localStorage (Supabase indisponível)
+// é registrada aqui. Quando a conexão volta, processarFilaSync()
+// reaplica cada item, na mesma ordem em que foi criado.
+// ═══════════════════════════════════════════════════════════════
+function getFila(){ return LS.get('sync_queue'); }
+function setFila(f){ LS.set('sync_queue', f); }
+function enfileirar(tabela, operacao, payload, match){
+  const fila=getFila();
+  fila.push({ id: Date.now()+'_'+Math.random().toString(36).slice(2), tabela, operacao, payload, match: match||null, ts: new Date().toISOString() });
+  setFila(fila);
+}
+function getUltimaSync(){ return localStorage.getItem('yalog_ultima_sync'); }
+function setUltimaSync(iso){ localStorage.setItem('yalog_ultima_sync', iso); }
+
+// Executa a chamada ao Supabase; se falhar por qualquer motivo (rede
+// caiu no meio da sessão, tabela ausente, chave incorreta etc.), cai
+// automaticamente para o localStorage em vez de quebrar a tela — a
+// troca fica invisível para quem está usando o sistema. Quando a
+// gravação cai para local, e filaOp foi informado, ela é enfileirada
+// para ser replicada ao Supabase assim que a conexão voltar.
+async function withFallback(supabaseFn, localFn, filaOp){
+  if(!OFF()){
+    try{ return await supabaseFn(); }
+    catch(e){
+      console.warn('[YALOG] Falha no Supabase, usando localStorage:', e.message||e);
+      SUPABASE_ONLINE=false;
+    }
+  }
+  const resultado = localFn();
+  if(filaOp) enfileirar(filaOp.tabela, filaOp.operacao, filaOp.payload, filaOp.match);
+  return resultado;
+}
+
+// Reaplica a fila pendente contra o Supabase, em ordem (FIFO), parando
+// no primeiro erro para nunca gravar fora de ordem (ex.: licença antes
+// da empresa que ela referencia). Chamada automaticamente pelo monitor
+// de conexão e manualmente pelo botão "Sincronizar Agora".
+async function processarFilaSync(){
+  if(OFF() || !supabaseClient) return { ok:false, motivo:'offline', processados:0 };
+  let fila=getFila();
+  if(!fila.length) return { ok:true, processados:0 };
+  let processados=0;
+  for(const item of fila.slice()){
+    try{
+      if(item.operacao==='insert'){
+        const {error}=await supabaseClient.from(item.tabela).insert([item.payload]);
+        if(error) throw error;
+      } else if(item.operacao==='upsert'){
+        const {error}=await supabaseClient.from(item.tabela).upsert(item.payload,{onConflict:(item.match&&item.match.onConflict)});
+        if(error) throw error;
+      } else if(item.operacao==='update'){
+        let q=supabaseClient.from(item.tabela).update(item.payload);
+        Object.entries(item.match||{}).forEach(([k,v])=>{ q=q.eq(k,v); });
+        const {error}=await q;
+        if(error) throw error;
+      }
+      fila=fila.filter(f=>f.id!==item.id);
+      setFila(fila);
+      processados++;
+    }catch(e){
+      console.warn('[YALOG] Sync pendente falhou, mantendo na fila:', e.message||e);
+      SUPABASE_ONLINE=false;
+      return { ok:false, processados, restante:fila.length };
+    }
+  }
+  setUltimaSync(new Date().toISOString());
+  return { ok:true, processados };
+}
+
 const DB = {
   async empresas(){
-    if(OFF()) return LS.get('empresas');
-    const {data,error}=await supabaseClient.from('empresas').select('*').order('criado_em',{ascending:false});
-    if(error)throw error; return data||[];
+    return withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('empresas').select('*').order('created_at',{ascending:false}); if(error)throw error; return data||[]; },
+      ()=> LS.get('empresas')
+    );
   },
   async addEmpresa(e){
-    if(OFF()){ const a=LS.get('empresas'); a.push(e); LS.set('empresas',a); return e; }
-    const {data,error}=await supabaseClient.from('empresas').insert([e]).select().single();
-    if(error)throw error; return data;
+    return withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('empresas').insert([e]).select().single(); if(error)throw error; return data; },
+      ()=>{ const a=LS.get('empresas'); a.push(e); LS.set('empresas',a); return e; },
+      {tabela:'empresas', operacao:'upsert', payload:e, match:{onConflict:'company_id'}}
+    );
   },
   async updateEmpresa(companyId, patch){
-    if(OFF()){ const a=LS.get('empresas'); const i=a.findIndex(x=>x.company_id===companyId); if(i>=0){a[i]={...a[i],...patch};LS.set('empresas',a);} return; }
-    const {error}=await supabaseClient.from('empresas').update(patch).eq('company_id',companyId);
-    if(error)throw error;
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('empresas').update(patch).eq('company_id',companyId); if(error)throw error; },
+      ()=>{ const a=LS.get('empresas'); const i=a.findIndex(x=>x.company_id===companyId); if(i>=0){a[i]={...a[i],...patch};LS.set('empresas',a);} },
+      {tabela:'empresas', operacao:'update', payload:patch, match:{company_id:companyId}}
+    );
   },
   async usuarios(){
-    if(OFF()) return LS.get('usuarios');
-    const {data,error}=await supabaseClient.from('usuarios').select('*').order('criado_em',{ascending:false});
-    if(error)throw error; return data||[];
+    return withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('usuarios').select('*').order('created_at',{ascending:false}); if(error)throw error; return data||[]; },
+      ()=> LS.get('usuarios')
+    );
   },
   async addUsuario(u){
-    if(OFF()){ const a=LS.get('usuarios'); a.push(u); LS.set('usuarios',a); return u; }
-    const {data,error}=await supabaseClient.from('usuarios').insert([u]).select().single();
-    if(error)throw error; return data;
+    return withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('usuarios').insert([u]).select().single(); if(error)throw error; return data; },
+      ()=>{ const a=LS.get('usuarios'); a.push(u); LS.set('usuarios',a); return u; },
+      {tabela:'usuarios', operacao:'upsert', payload:u, match:{onConflict:'company_id,login'}}
+    );
   },
   async updateUsuario(companyId, login, patch){
-    if(OFF()){ const a=LS.get('usuarios'); const i=a.findIndex(x=>x.company_id===companyId&&x.login===login); if(i>=0){a[i]={...a[i],...patch};LS.set('usuarios',a);} return; }
-    const {error}=await supabaseClient.from('usuarios').update(patch).eq('company_id',companyId).eq('login',login);
-    if(error)throw error;
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('usuarios').update(patch).eq('company_id',companyId).eq('login',login); if(error)throw error; },
+      ()=>{ const a=LS.get('usuarios'); const i=a.findIndex(x=>x.company_id===companyId&&x.login===login); if(i>=0){a[i]={...a[i],...patch};LS.set('usuarios',a);} },
+      {tabela:'usuarios', operacao:'update', payload:patch, match:{company_id:companyId, login:login}}
+    );
+  },
+  async licencas(){
+    return withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('licencas').select('*'); if(error)throw error; return data||[]; },
+      ()=> LS.get('licencas')
+    );
+  },
+  async addLicenca(l){
+    return withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('licencas').insert([l]).select().single(); if(error)throw error; return data; },
+      ()=>{ const a=LS.get('licencas'); a.push(l); LS.set('licencas',a); return l; },
+      {tabela:'licencas', operacao:'upsert', payload:l, match:{onConflict:'company_id'}}
+    );
+  },
+  async updateLicenca(companyId, patch){
+    const row={...patch, company_id:companyId};
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('licencas').upsert(row,{onConflict:'company_id'}); if(error)throw error; },
+      ()=>{ const a=LS.get('licencas'); const i=a.findIndex(x=>x.company_id===companyId); if(i>=0){a[i]={...a[i],...row};} else {a.push(row);} LS.set('licencas',a); },
+      {tabela:'licencas', operacao:'upsert', payload:row, match:{onConflict:'company_id'}}
+    );
   },
   async modulos(){
-    if(OFF()) return LS.get('modulos');
-    const {data,error}=await supabaseClient.from('modulos').select('*');
-    if(error)throw error; return data||[];
+    return withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('modulos').select('*'); if(error)throw error; return data||[]; },
+      ()=> LS.get('modulos')
+    );
   },
   async setModulo(companyId, modulo, status){
-    if(OFF()){
-      const a=LS.get('modulos'); const i=a.findIndex(x=>x.company_id===companyId&&x.modulo===modulo);
-      const row={company_id:companyId,modulo,status,liberado_em:status==='LIBERADO'?new Date().toISOString():null};
-      if(i>=0)a[i]=row; else a.push(row); LS.set('modulos',a); return;
-    }
     const row={company_id:companyId,modulo,status,liberado_em:status==='LIBERADO'?new Date().toISOString():null};
-    const {error}=await supabaseClient.from('modulos').upsert(row,{onConflict:'company_id,modulo'});
-    if(error)throw error;
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('modulos').upsert(row,{onConflict:'company_id,modulo'}); if(error)throw error; },
+      ()=>{ const a=LS.get('modulos'); const i=a.findIndex(x=>x.company_id===companyId&&x.modulo===modulo); if(i>=0)a[i]=row; else a.push(row); LS.set('modulos',a); },
+      {tabela:'modulos', operacao:'upsert', payload:row, match:{onConflict:'company_id,modulo'}}
+    );
   },
   async log(tipo,detalhe,companyId){
-    const entry={tipo,detalhe:detalhe||'',company_id:companyId||null,criado_em:new Date().toISOString()};
-    if(OFF()){ const a=LS.get('logs'); a.push(entry); LS.set('logs',a.slice(-1000)); return; }
-    try{ await supabaseClient.from('logs').insert([entry]); }catch(e){ console.warn('log',e); }
+    const entry={tipo,detalhe:detalhe||'',company_id:companyId||null,created_at:new Date().toISOString()};
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('logs').insert([entry]); if(error)throw error; },
+      ()=>{ const a=LS.get('logs'); a.push(entry); LS.set('logs',a.slice(-1000)); },
+      {tabela:'logs', operacao:'insert', payload:entry}
+    );
   },
   async logs(){
-    if(OFF()) return LS.get('logs').slice().reverse();
-    const {data,error}=await supabaseClient.from('logs').select('*').order('criado_em',{ascending:false}).limit(200);
-    if(error)throw error; return data||[];
+    return withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('logs').select('*').order('created_at',{ascending:false}).limit(200); if(error)throw error; return data||[]; },
+      ()=> LS.get('logs').slice().reverse()
+    );
   },
 };
 
@@ -945,7 +1113,7 @@ async function seedSuperAdmin(){
     await DB.addUsuario({
       company_id:'YALOG-CORE', nome: SA.nome || 'Super Administrador', login: loginSA,
       senha_hash: senhaHash, role:'SUPER_ADMIN', ativo:true,
-      criado_em:new Date().toISOString(),
+      created_at:new Date().toISOString(),
     });
     console.log('[YALOG] Super Admin criado');
     return;
@@ -971,6 +1139,27 @@ async function seedSuperAdmin(){
 }
 
 // ═══════════════════════════════════════════════════════════════
+// MONITOR DE CONEXÃO — detecta o retorno do Supabase sozinho e
+// dispara a sincronização da fila pendente, sem ação do usuário
+// (Sprint YALOG-PLATFORM-003)
+// ═══════════════════════════════════════════════════════════════
+let _syncTimer=null;
+async function _verificarEResincronizar(){
+  await testarConexaoSupabase();
+  if(SUPABASE_ONLINE && getFila().length){ await processarFilaSync(); }
+  const cfg=document.getElementById('s-config');
+  if(cfg && cfg.classList.contains('active')) { try{ await atualizarDiagnostico(); }catch(e){} }
+}
+function iniciarMonitorConexao(){
+  if(_syncTimer) return;
+  _syncTimer=setInterval(_verificarEResincronizar, 25000);
+  if(typeof window!=='undefined' && window.addEventListener){
+    window.addEventListener('online', _verificarEResincronizar);
+    window.addEventListener('offline', ()=>{ SUPABASE_ONLINE=false; });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // RESETAR AMBIENTE — apaga todos os dados locais e recria o Super Admin
 // ═══════════════════════════════════════════════════════════════
 async function resetarAmbiente(){
@@ -984,8 +1173,9 @@ async function resetarAmbiente(){
   console.log('[YALOG] Reset iniciado');
 
   // Remove todas as chaves da Platform no localStorage (prefixo yalog_)
-  const chaves = ['empresas','usuarios','licencas','modulos','logs','sessions'];
+  const chaves = ['empresas','usuarios','licencas','modulos','logs','sessions','sync_queue'];
   chaves.forEach(k => localStorage.removeItem('yalog_'+k));
+  localStorage.removeItem('yalog_ultima_sync');
 
   // Encerra sessão ativa
   sessionStorage.removeItem('yalog_admin_session');
@@ -1185,10 +1375,12 @@ function go(id){
 async function renderDashboard(){
   const empresas=await DB.empresas();
   const usuarios=await DB.usuarios();
+  const licencas=await DB.licencas();
+  const licMap={}; licencas.forEach(l=>licMap[l.company_id]=l);
   const escopo=escopoEmpresa();
   const empV=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
   const usrV=escopo?usuarios.filter(u=>u.company_id===escopo):usuarios;
-  const ativas=empV.filter(e=>(e.licenca_status||'ATIVA')==='ATIVA').length;
+  const ativas=empV.filter(e=>((licMap[e.company_id]||{}).status||'ATIVA')==='ATIVA').length;
 
   document.getElementById('dashKpis').innerHTML=`
     <div class="kc"><span class="ki">🏢</span><div class="kv">${empV.length}</div><div class="kl">Clientes</div></div>
@@ -1211,18 +1403,23 @@ async function renderDashboard(){
 // ═══════════════════════════════════════════════════════════════
 async function renderClientes(){
   const empresas=await DB.empresas();
+  const licencas=await DB.licencas();
+  const licMap={}; licencas.forEach(l=>licMap[l.company_id]=l);
   const escopo=escopoEmpresa();
   const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
   const tb=document.getElementById('tbClientes');
   if(!lista.length){ tb.innerHTML='<tr><td colspan="7"><div class="qs-empty">Nenhum cliente cadastrado.</div></td></tr>'; return; }
-  tb.innerHTML=lista.map(e=>`<tr>
+  tb.innerHTML=lista.map(e=>{
+    const lic=licMap[e.company_id]||{};
+    return `<tr>
     <td style="font-family:var(--mono);" style="color:var(--orange2);">${e.company_id}</td>
     <td>${e.razao_social}</td><td style="font-family:var(--mono);">${e.cnpj||'—'}</td>
     <td>${e.responsavel||'—'}</td>
-    <td><span class="master-badge">${e.plano||'FREE'}</span></td>
-    <td>${licBadge(e.licenca_status)}</td>
+    <td><span class="master-badge">${lic.plano||'FREE'}</span></td>
+    <td>${licBadge(lic.status)}</td>
     <td>${can('editarLicenca')?`<button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Licença</button>`:'—'}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 function licBadge(s){
   s=s||'ATIVA';
@@ -1248,11 +1445,15 @@ async function salvarCliente(){
     nome_fantasia:document.getElementById('cli_fantasia').value.trim()||razao,
     cnpj, responsavel:resp, email,
     telefone:document.getElementById('cli_tel').value.trim(),
-    plano:'FREE', licenca_status:'ATIVA', licenca_validade:null,
-    max_usuarios:5, max_modulos:1, criado_em:new Date().toISOString(),
+    created_at:new Date().toISOString(),
   };
   try{
     await DB.addEmpresa(emp);
+    // Licença própria (tabela licencas), plano FREE por padrão
+    await DB.addLicenca({
+      company_id:companyId, plano:'FREE', status:'ATIVA', validade:null,
+      qtd_usuarios:5, qtd_modulos:1, created_at:new Date().toISOString(),
+    });
     // libera WMS por padrão, demais bloqueados
     for(const m of MODULOS) await DB.setModulo(companyId,m.id,m.id==='wms'?'LIBERADO':'BLOQUEADO');
     await DB.log('CADASTRO_CLIENTE','Cliente: '+razao+' ('+companyId+')',companyId);
@@ -1325,7 +1526,7 @@ async function salvarUsuario(){
   try{
     await DB.addUsuario({
       company_id:companyId, nome, login, senha_hash:await hashSenha(senha),
-      role, ativo:true, criado_em:new Date().toISOString(),
+      role, ativo:true, created_at:new Date().toISOString(),
     });
     await DB.log('CADASTRO_USUARIO','Usuário '+login+' ('+role+')',companyId);
     toast('Usuário criado: '+login,'ok');
@@ -1338,29 +1539,33 @@ async function salvarUsuario(){
 // ═══════════════════════════════════════════════════════════════
 async function renderLicencas(){
   const empresas=await DB.empresas();
+  const licencas=await DB.licencas();
+  const licMap={}; licencas.forEach(l=>licMap[l.company_id]=l);
   const escopo=escopoEmpresa();
   const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
   const tb=document.getElementById('tbLicencas');
   if(!lista.length){ tb.innerHTML='<tr><td colspan="7"><div class="qs-empty">Nenhuma licença.</div></td></tr>'; return; }
-  tb.innerHTML=lista.map(e=>`<tr>
+  tb.innerHTML=lista.map(e=>{
+    const lic=licMap[e.company_id]||{};
+    return `<tr>
     <td>${e.nome_fantasia||e.razao_social}<br><span style="font-family:var(--mono);" style="font-size:9px;color:var(--w40);">${e.company_id}</span></td>
-    <td><span class="master-badge">${e.plano||'FREE'}</span></td>
-    <td>${licBadge(e.licenca_status)}</td>
-    <td style="font-family:var(--mono);">${e.licenca_validade?new Date(e.licenca_validade).toLocaleDateString('pt-BR'):'—'}</td>
-    <td>${e.max_usuarios||'∞'}</td><td>${e.max_modulos||'∞'}</td>
+    <td><span class="master-badge">${lic.plano||'FREE'}</span></td>
+    <td>${licBadge(lic.status)}</td>
+    <td style="font-family:var(--mono);">${lic.validade?new Date(lic.validade).toLocaleDateString('pt-BR'):'—'}</td>
+    <td>${lic.qtd_usuarios||'∞'}</td><td>${lic.qtd_modulos||'∞'}</td>
     <td>${can('editarLicenca')?`<button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Editar</button>`:'—'}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 async function abrirModalLicenca(companyId){
   if(!can('editarLicenca')){ toast('Sem permissão','err'); return; }
-  const empresas=await DB.empresas(); const e=empresas.find(x=>x.company_id===companyId);
-  if(!e)return;
+  const licencas=await DB.licencas(); const lic=licencas.find(x=>x.company_id===companyId)||{};
   document.getElementById('lic_company').value=companyId;
-  document.getElementById('lic_plano').value=e.plano||'FREE';
-  document.getElementById('lic_status').value=e.licenca_status||'ATIVA';
-  document.getElementById('lic_validade').value=e.licenca_validade?e.licenca_validade.slice(0,10):'';
-  document.getElementById('lic_usuarios').value=e.max_usuarios||5;
-  document.getElementById('lic_modulos').value=e.max_modulos||1;
+  document.getElementById('lic_plano').value=lic.plano||'FREE';
+  document.getElementById('lic_status').value=lic.status||'ATIVA';
+  document.getElementById('lic_validade').value=lic.validade?lic.validade.slice(0,10):'';
+  document.getElementById('lic_usuarios').value=lic.qtd_usuarios||5;
+  document.getElementById('lic_modulos').value=lic.qtd_modulos||1;
   abrirModal('mLicenca');
 }
 async function salvarLicenca(){
@@ -1368,13 +1573,13 @@ async function salvarLicenca(){
   const companyId=document.getElementById('lic_company').value;
   const patch={
     plano:document.getElementById('lic_plano').value,
-    licenca_status:document.getElementById('lic_status').value,
-    licenca_validade:document.getElementById('lic_validade').value||null,
-    max_usuarios:parseInt(document.getElementById('lic_usuarios').value)||5,
-    max_modulos:parseInt(document.getElementById('lic_modulos').value)||1,
+    status:document.getElementById('lic_status').value,
+    validade:document.getElementById('lic_validade').value||null,
+    qtd_usuarios:parseInt(document.getElementById('lic_usuarios').value)||5,
+    qtd_modulos:parseInt(document.getElementById('lic_modulos').value)||1,
   };
   try{
-    await DB.updateEmpresa(companyId,patch);
+    await DB.updateLicenca(companyId,patch);
     await DB.log('ALTERACAO','Licença atualizada: '+companyId,companyId);
     toast('Licença salva','ok'); fecharModal('mLicenca'); renderLicencas();
   }catch(e){ toast('Erro: '+(e.message||e),'err'); }
@@ -1430,7 +1635,7 @@ async function renderLogs(){
   if(!logs.length){ tb.innerHTML='<tr><td colspan="4"><div class="qs-empty">Nenhum log.</div></td></tr>'; return; }
   const cor={LOGIN:'var(--g2)',LOGOUT:'var(--w40)',FALHA:'var(--r2)',CADASTRO_CLIENTE:'var(--b2)',CADASTRO_USUARIO:'var(--b2)',ALTERACAO:'var(--a2)'};
   tb.innerHTML=logs.slice(0,200).map(l=>`<tr>
-    <td style="font-family:var(--mono);" style="font-size:10px;">${new Date(l.criado_em).toLocaleString('pt-BR')}</td>
+    <td style="font-family:var(--mono);" style="font-size:10px;">${new Date(l.created_at).toLocaleString('pt-BR')}</td>
     <td><span style="color:${cor[l.tipo]||'var(--w)'};font-weight:600;font-size:10px;">${l.tipo}</span></td>
     <td style="font-family:var(--mono);" style="font-size:10px;">${l.company_id||'—'}</td>
     <td style="font-size:10px;">${l.detalhe||''}</td>
@@ -1440,9 +1645,64 @@ async function renderLogs(){
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURAÇÕES / PERFIL
 // ═══════════════════════════════════════════════════════════════
-function renderConfig(){
+async function renderConfig(){
   document.getElementById('cfg_prefix').value=YALOG_CONFIG.COMPANY_PREFIX||'YLG';
   document.getElementById('cfg_modo').value=OFF()?'OFFLINE (localStorage)':'SUPABASE';
+  try{ await atualizarDiagnostico(); }catch(e){ console.warn('[YALOG] Diagnóstico:',e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PAINEL DE DIAGNÓSTICO (Sprint YALOG-PLATFORM-003)
+// ═══════════════════════════════════════════════════════════════
+const TABELAS_PLATFORM=['empresas','usuarios','licencas','modulos','logs'];
+async function atualizarDiagnostico(){
+  const elSup=document.getElementById('diagStatusSupabase');
+  if(!elSup) return; // tela de Configurações não está montada ainda
+  const elOff=document.getElementById('diagStatusOffline');
+  const elSync=document.getElementById('diagUltimaSync');
+  const elLocal=document.getElementById('diagRegistrosLocais');
+  const elNuvem=document.getElementById('diagRegistrosNuvem');
+  const elFila=document.getElementById('diagFilaPendente');
+
+  elSup.textContent = SUPABASE_ONLINE ? 'Conectado' : 'Indisponível';
+  elSup.style.color = SUPABASE_ONLINE ? 'var(--g2)' : 'var(--r2)';
+  elOff.textContent = OFF() ? 'Ativo (usando localStorage)' : 'Inativo';
+  elOff.style.color = OFF() ? 'var(--a2)' : 'var(--w40)';
+  const us=getUltimaSync();
+  elSync.textContent = us ? new Date(us).toLocaleString('pt-BR') : 'Nunca';
+
+  const locCounts=TABELAS_PLATFORM.map(t=>LS.get(t).length);
+  const locTotal=locCounts.reduce((s,n)=>s+n,0);
+  elLocal.textContent = locTotal+' (emp:'+locCounts[0]+' · usr:'+locCounts[1]+' · lic:'+locCounts[2]+' · mod:'+locCounts[3]+' · logs:'+locCounts[4]+')';
+
+  const fila=getFila();
+  if(elFila) elFila.textContent = fila.length;
+
+  if(!supabaseClient){ elNuvem.textContent='—'; return; }
+  if(OFF()){ elNuvem.textContent='indisponível (offline)'; return; }
+  elNuvem.textContent='consultando...';
+  try{
+    const resultados=await Promise.all(TABELAS_PLATFORM.map(t=>supabaseClient.from(t).select('*',{count:'exact',head:true})));
+    if(resultados.some(r=>r.error)) throw resultados.find(r=>r.error).error;
+    const nuvemCounts=resultados.map(r=>r.count||0);
+    const nuvemTotal=nuvemCounts.reduce((s,n)=>s+n,0);
+    elNuvem.textContent = nuvemTotal+' (emp:'+nuvemCounts[0]+' · usr:'+nuvemCounts[1]+' · lic:'+nuvemCounts[2]+' · mod:'+nuvemCounts[3]+' · logs:'+nuvemCounts[4]+')';
+  }catch(e){ elNuvem.textContent='indisponível'; }
+}
+async function testarConexaoEAtualizar(){
+  toast('Testando conexão…','info');
+  await testarConexaoSupabase();
+  await atualizarDiagnostico();
+  toast(SUPABASE_ONLINE?'Supabase conectado':'Supabase indisponível — usando localStorage', SUPABASE_ONLINE?'ok':'err');
+}
+async function sincronizarAgoraEAtualizar(){
+  toast('Sincronizando…','info');
+  await testarConexaoSupabase();
+  if(!SUPABASE_ONLINE){ toast('Sem conexão com o Supabase no momento','err'); await atualizarDiagnostico(); return; }
+  const r=await processarFilaSync();
+  await atualizarDiagnostico();
+  if(r.ok) toast(r.processados?(r.processados+' registro(s) sincronizado(s)'):'Nada pendente para sincronizar','ok');
+  else toast('Sincronização parcial — '+r.restante+' pendente(s), verifique a conexão','err');
 }
 function renderPerfil(){
   const u=SESSION.user;
@@ -1472,29 +1732,51 @@ async function alterarSenha(){
 // INICIALIZAÇÃO
 // ═══════════════════════════════════════════════════════════════
 (async function init(){
-  // ORDEM CRÍTICA: o seed do Super Admin roda ANTES de qualquer
-  // manipulação de DOM, e cada etapa é isolada em try/catch. Assim,
-  // um erro de interface nunca impede a criação do Super Admin —
-  // que é o que garante o login funcionando na primeira abertura.
+  // ORDEM CRÍTICA: primeiro detectamos se o Supabase responde, depois
+  // o seed do Super Admin roda contra o backend correto (Supabase ou
+  // localStorage). Cada etapa é isolada em try/catch — um erro de
+  // conexão ou de interface nunca impede o login de funcionar.
+  try{
+    await testarConexaoSupabase();
+  }catch(e){
+    console.error('[YALOG] Falha ao testar conexão Supabase:',e);
+    SUPABASE_ONLINE=false;
+  }
+
+  // Se já voltamos online com uma fila pendente de uma sessão anterior
+  // (ex.: fechou o navegador offline com cadastros feitos), sincroniza
+  // antes de qualquer outra coisa — sem exigir nenhuma ação do usuário.
+  try{
+    if(SUPABASE_ONLINE && getFila().length) await processarFilaSync();
+  }catch(e){
+    console.warn('[YALOG] Sincronização inicial da fila falhou:',e);
+  }
+
   try{
     await seedSuperAdmin();
   }catch(e){
     console.error('[YALOG] Falha no seed inicial:',e);
   }
 
-  // Banner de modo (puramente informativo — protegido)
+  // Banner de modo (puramente informativo — protegido). Só aparece em
+  // modo offline, como diagnóstico para o Super Admin; o restante da
+  // interface é idêntico nos dois modos.
   try{
     const banner=document.getElementById('loginConfigBanner');
     if(banner && OFF()){
       const SA=YALOG_CONFIG.SUPER_ADMIN||{};
       banner.innerHTML=
-        '<div style="background:rgba(201,79,26,.08);border:1px solid rgba(201,79,26,.25);padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--w70);line-height:1.6;">MODO OFFLINE (localStorage) &middot; nenhuma conexão necessária</div>'+
-        '<div style="background:rgba(201,79,26,.08);border:1px solid rgba(201,79,26,.25);padding:12px 14px;font-size:11px;color:var(--w70);line-height:1.6;">Super Admin: <b style="font-family:var(--mono);color:var(--orange2);">'+(SA.login||'')+'</b> &middot; senha em platform-config.js</div>';
+        '<div style="background:rgba(201,79,26,.08);border:1px solid rgba(201,79,26,.25);padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--w70);line-height:1.6;">MODO OFFLINE (localStorage) &middot; Supabase indisponível ou não configurado</div>'+
+        '<div style="background:rgba(201,79,26,.08);border:1px solid rgba(201,79,26,.25);padding:12px 14px;font-size:11px;color:var(--w70);line-height:1.6;">Super Admin: <b style="font-family:var(--mono);color:var(--orange2);">'+(SA.login||'')+'</b> &middot; senha configurada no início do arquivo</div>';
       console.log('%cYALog Platform — MODO OFFLINE','color:#e8692a;font-weight:bold;');
     }
   }catch(e){ console.warn('[YALOG] Banner:',e); }
 
   try{ checkResp(); }catch(e){}
+
+  // Monitor de conexão: detecta sozinho quando o Supabase volta e
+  // dispara a sincronização da fila pendente (Sprint YALOG-PLATFORM-003)
+  try{ iniciarMonitorConexao(); }catch(e){ console.warn('[YALOG] Monitor de conexão:',e); }
 
   // Restaura sessão / mostra login (protegido)
   try{
