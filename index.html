@@ -689,6 +689,47 @@ a{color:inherit;text-decoration:none;}
   <button class="btn btn-p" style="width:100%;justify-content:center;" onclick="salvarLicenca()">Salvar Licença</button>
 </div></div>
 
+<!-- Sprint YALOG-PLATFORM-006 -->
+<div class="mo" id="mEditarUsuario"><div class="md">
+  <button class="mc" onclick="fecharModal('mEditarUsuario')">&#10005;</button>
+  <div class="mt">Editar Usuário</div>
+  <div class="ms">Dados, perfil e credenciais de acesso</div>
+  <input type="hidden" id="edu_company">
+  <input type="hidden" id="edu_login_original">
+  <div class="fg"><label>Nome *</label><input id="edu_nome"></div>
+  <div class="fg"><label>Login *</label><input id="edu_login" autocomplete="off"></div>
+  <div class="fg"><label>Perfil *</label><select id="edu_role"></select></div>
+  <div class="fg"><label>Empresa</label><input id="edu_empresa" disabled></div>
+  <div class="fg"><label>Status *</label><select id="edu_status"><option value="ativo">Ativo</option><option value="inativo">Inativo</option></select></div>
+  <div style="border-top:1px solid var(--border2);margin:16px 0;"></div>
+  <div class="fg"><label>Nova Senha</label><input id="edu_senha" type="password" autocomplete="new-password" placeholder="Deixe em branco para manter a atual"></div>
+  <div class="fg"><label>Confirmar Nova Senha</label><input id="edu_senha2" type="password" autocomplete="new-password"></div>
+  <div class="fg" style="display:flex;align-items:center;gap:8px;flex-direction:row;">
+    <input type="checkbox" id="edu_obrigar_troca" style="width:auto;">
+    <label style="margin:0;">Obrigar troca de senha no próximo login</label>
+  </div>
+  <div style="border-top:1px solid var(--border2);margin:16px 0;"></div>
+  <button class="btn btn-o" style="width:100%;justify-content:center;margin-bottom:10px;" onclick="resetarSenhaUsuario()">Resetar Senha</button>
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-o" style="flex:1;justify-content:center;" onclick="fecharModal('mEditarUsuario')">Cancelar</button>
+    <button class="btn btn-p" style="flex:1;justify-content:center;" onclick="salvarEdicaoUsuario()">Salvar Alterações</button>
+  </div>
+</div></div>
+
+<div class="mo" id="mSenhaTemporaria"><div class="md">
+  <button class="mc" onclick="fecharModalSenhaTemporaria()">&#10005;</button>
+  <div class="mt">Senha temporária gerada</div>
+  <div class="ms">Copie esta senha e envie ao usuário — ela não ficará visível novamente.</div>
+  <div style="background:rgba(201,79,26,.08);border:1px solid rgba(201,79,26,.25);padding:16px;margin:14px 0;text-align:center;">
+    <div style="font-size:10px;color:var(--w40);font-family:var(--mono);letter-spacing:.1em;margin-bottom:8px;">NOVA SENHA</div>
+    <div id="senhaTemporariaTexto" style="font-size:20px;font-family:var(--mono);color:var(--orange2);font-weight:700;letter-spacing:.05em;">—</div>
+  </div>
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-o" style="flex:1;justify-content:center;" onclick="copiarSenhaTemporaria()">Copiar</button>
+    <button class="btn btn-p" style="flex:1;justify-content:center;" onclick="fecharModalSenhaTemporaria()">Fechar</button>
+  </div>
+</div></div>
+
 <!-- SDK do Supabase (Sprint YALOG-PLATFORM-002). Carregado via CDN — se
      não houver internet ou o CDN estiver bloqueado, window.supabase
      simplesmente não existe e a Platform cai para localStorage. -->
@@ -1364,6 +1405,7 @@ function can(acao){
     cadastrarGestor:['SUPER_ADMIN'],
     cadastrarMaster:['SUPER_ADMIN','GESTOR'],
     cadastrarUsuario:['SUPER_ADMIN','GESTOR','MASTER'],
+    editarUsuario:['SUPER_ADMIN','GESTOR'],
     liberarModulo:['SUPER_ADMIN','GESTOR'],
     editarLicenca:['SUPER_ADMIN','GESTOR'],
     verLogs:['SUPER_ADMIN','GESTOR'],
@@ -1522,7 +1564,7 @@ async function renderUsuarios(){
     <td><span class="master-badge">${ROLES[u.role]||u.role}</span></td>
     <td style="font-family:var(--mono);">${u.company_id}</td>
     <td>${u.ativo!==false?'<span class="sp sp-lib">Ativo</span>':'<span class="sp sp-blk">Inativo</span>'}</td>
-    <td>${u.role!=='SUPER_ADMIN'?`<button class="btn btn-o btn-xs" onclick="toggleUsuario('${u.company_id}','${u.login}')">${u.ativo!==false?'Desativar':'Ativar'}</button>`:'—'}</td>
+    <td>${u.role!=='SUPER_ADMIN'?`<button class="btn btn-b btn-xs" onclick="abrirModalEditarUsuario('${u.company_id}','${u.login}')">Editar</button> <button class="btn btn-o btn-xs" onclick="toggleUsuario('${u.company_id}','${u.login}')">${u.ativo!==false?'Desativar':'Ativar'}</button>`:'—'}</td>
   </tr>`).join('');
 }
 async function toggleUsuario(companyId,login){
@@ -1578,6 +1620,152 @@ async function salvarUsuario(){
     toast('Usuário criado: '+login,'ok');
     fecharModal('mUsuario'); renderUsuarios();
   }catch(e){ toast('Erro: '+(e.message||e),'err'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EDITAR USUÁRIO (Sprint YALOG-PLATFORM-006)
+// ═══════════════════════════════════════════════════════════════
+async function abrirModalEditarUsuario(companyId, login){
+  if(!can('editarUsuario')){ toast('Sem permissão','err'); return; }
+  const usuarios=await DB.usuarios();
+  const u=usuarios.find(x=>x.company_id===companyId&&x.login===login);
+  if(!u){ toast('Usuário não encontrado','err'); return; }
+
+  document.getElementById('edu_company').value=companyId;
+  document.getElementById('edu_login_original').value=login;
+  document.getElementById('edu_nome').value=u.nome||'';
+  document.getElementById('edu_login').value=u.login||'';
+
+  // Perfis que o usuário logado pode atribuir — mesma regra já usada na
+  // criação (item 10 estende: quem não pode CRIAR um perfil também não
+  // deveria poder PROMOVER alguém a ele por aqui).
+  const atribuiveis=[];
+  if(can('cadastrarGestor')) atribuiveis.push('GESTOR');
+  if(can('cadastrarMaster')) atribuiveis.push('MASTER');
+  if(can('cadastrarUsuario')) atribuiveis.push('USUARIO');
+  if(!atribuiveis.includes(u.role)) atribuiveis.unshift(u.role); // garante que o perfil atual sempre apareça, mesmo que não atribuível
+  document.getElementById('edu_role').innerHTML=atribuiveis.map(r=>`<option value="${r}" ${r===u.role?'selected':''}>${ROLES[r]||r}</option>`).join('');
+
+  // Item 4: Empresa é somente leitura.
+  const empresas=await DB.empresas();
+  const empresa=empresas.find(e=>e.company_id===companyId);
+  document.getElementById('edu_empresa').value=companyId+(empresa?(' — '+(empresa.nome_fantasia||empresa.razao_social)):'');
+
+  document.getElementById('edu_status').value=u.ativo!==false?'ativo':'inativo';
+  document.getElementById('edu_senha').value='';
+  document.getElementById('edu_senha2').value='';
+  document.getElementById('edu_obrigar_troca').checked=!!u.obrigar_troca_senha;
+
+  abrirModal('mEditarUsuario');
+}
+
+async function salvarEdicaoUsuario(){
+  if(!can('editarUsuario')){ toast('Sem permissão','err'); return; }
+  const companyId=document.getElementById('edu_company').value;
+  const loginOriginal=document.getElementById('edu_login_original').value;
+  const nome=document.getElementById('edu_nome').value.trim();
+  const loginNovo=document.getElementById('edu_login').value.trim().toLowerCase();
+  const role=document.getElementById('edu_role').value;
+  const status=document.getElementById('edu_status').value;
+  const senha=document.getElementById('edu_senha').value;
+  const senha2=document.getElementById('edu_senha2').value;
+  const obrigarTroca=document.getElementById('edu_obrigar_troca').checked;
+
+  // Item 11: validações — mesmo padrão já usado na criação de usuário.
+  if(!nome||!loginNovo||!role){ toast('Preencha todos os campos obrigatórios','err'); return; }
+  if(senha||senha2){
+    if(senha.length<6){ toast('Senha mínima 6 caracteres','err'); return; }
+    if(senha!==senha2){ toast('Senhas não conferem','err'); return; }
+  }
+
+  const usuarios=await DB.usuarios();
+  if(loginNovo!==loginOriginal && usuarios.some(u=>u.company_id===companyId&&u.login===loginNovo)){
+    toast('Login já existe nesta empresa','err'); return;
+  }
+  const atual=usuarios.find(u=>u.company_id===companyId&&u.login===loginOriginal);
+  if(!atual){ toast('Usuário não encontrado','err'); return; }
+
+  // Monta só os campos que de fato mudaram — usado tanto no UPDATE
+  // quanto na lista "Campos alterados" da auditoria (item 7).
+  const patch={};
+  const camposAlterados=[];
+  if(nome!==atual.nome){ patch.nome=nome; camposAlterados.push('Nome'); }
+  if(loginNovo!==atual.login){ patch.login=loginNovo; camposAlterados.push('Login'); }
+  if(role!==atual.role){ patch.role=role; camposAlterados.push('Perfil'); }
+  const ativoNovo=(status==='ativo');
+  if(ativoNovo!==(atual.ativo!==false)){ patch.ativo=ativoNovo; camposAlterados.push('Status'); }
+  if(obrigarTroca!==!!atual.obrigar_troca_senha){ patch.obrigar_troca_senha=obrigarTroca; camposAlterados.push('Obrigar troca de senha'); }
+  if(senha){
+    // Item 5: recalcula com EXATAMENTE a mesma função usada na criação
+    // (hashSenha) — nunca texto puro, nunca outro algoritmo.
+    patch.senha_hash=await hashSenha(senha);
+    camposAlterados.push('Senha');
+  }
+
+  if(!camposAlterados.length){ toast('Nenhuma alteração para salvar','info'); fecharModal('mEditarUsuario'); return; }
+
+  try{
+    // Item 6: somente UPDATE, via a mesma função já usada em toda a
+    // Platform — nunca recria/apaga registro, nunca mexe em IDs
+    // (company_id+login continuam sendo a chave usada no WHERE).
+    await DB.updateUsuario(companyId, loginOriginal, patch);
+    await _registrarAuditoriaEdicaoUsuario(loginNovo, companyId, camposAlterados);
+    toast('Usuário atualizado','ok');
+    fecharModal('mEditarUsuario');
+    renderUsuarios();
+  }catch(e){ toast('Erro: '+(e.message||e),'err'); }
+}
+
+// Item 7: formato exato pedido (Administrador/Usuário/Empresa/Campos
+// alterados/Data/Hora), usando o mecanismo de log já existente —
+// DB.log já grava company_id e o timestamp (created_at, via trigger no
+// Supabase) automaticamente, com o mesmo fallback/fila offline de sempre.
+async function _registrarAuditoriaEdicaoUsuario(login, companyId, camposAlterados){
+  const admin=(SESSION&&SESSION.user)?SESSION.user.nome:'—';
+  const detalhe='Administrador: '+admin+' | Usuário: '+login+' | Empresa: '+companyId+' | Campos alterados: '+camposAlterados.join(', ');
+  await DB.log('USUARIO_ALTERADO', detalhe, companyId);
+}
+
+// Item 9: Resetar Senha — gera, salva imediatamente (independente do
+// botão "Salvar Alterações") e mostra uma única vez. _senhaTemporariaAtual
+// só existe em memória enquanto o modal de confirmação está aberto —
+// fecharModalSenhaTemporaria() sempre zera essa variável e o texto na
+// tela, então a senha em texto puro nunca sobrevive ao fechamento.
+let _senhaTemporariaAtual=null;
+function _gerarSenhaTemporaria(){
+  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let s='';
+  for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
+  return 'YLG-'+s;
+}
+async function resetarSenhaUsuario(){
+  if(!can('editarUsuario')){ toast('Sem permissão','err'); return; }
+  const companyId=document.getElementById('edu_company').value;
+  const login=document.getElementById('edu_login_original').value;
+  if(!companyId||!login){ toast('Usuário não encontrado','err'); return; }
+  const senhaTemp=_gerarSenhaTemporaria();
+  try{
+    const hash=await hashSenha(senhaTemp);
+    await DB.updateUsuario(companyId, login, {senha_hash:hash});
+    await _registrarAuditoriaEdicaoUsuario(login, companyId, ['Senha (reset)']);
+    _senhaTemporariaAtual=senhaTemp;
+    document.getElementById('senhaTemporariaTexto').textContent=senhaTemp;
+    fecharModal('mEditarUsuario');
+    abrirModal('mSenhaTemporaria');
+    renderUsuarios();
+  }catch(e){ toast('Erro ao resetar senha: '+(e.message||e),'err'); }
+}
+function copiarSenhaTemporaria(){
+  if(!_senhaTemporariaAtual) return;
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(_senhaTemporariaAtual); toast('Senha copiada','ok'); }
+    else toast('Copie manualmente — clipboard indisponível','info');
+  }catch(e){ toast('Não foi possível copiar — selecione manualmente','err'); }
+}
+function fecharModalSenhaTemporaria(){
+  _senhaTemporariaAtual=null;
+  const el=document.getElementById('senhaTemporariaTexto'); if(el) el.textContent='—';
+  fecharModal('mSenhaTemporaria');
 }
 
 // ═══════════════════════════════════════════════════════════════
