@@ -1177,8 +1177,8 @@ async function resetarAmbiente(){
   chaves.forEach(k => localStorage.removeItem('yalog_'+k));
   localStorage.removeItem('yalog_ultima_sync');
 
-  // Encerra sessão ativa
-  sessionStorage.removeItem('yalog_admin_session');
+  // Encerra sessão ativa (compartilhada com o WMS — Sprint YALOG-PLATFORM-005)
+  localStorage.removeItem('yalog_admin_session');
   SESSION = null;
 
   console.log('[YALOG] Dados locais apagados');
@@ -1269,7 +1269,9 @@ async function fazerLogin(){
     if(usuario.ativo===false){ toast('Usuário inativo','err'); return; }
 
     SESSION={ user:usuario };
-    sessionStorage.setItem('yalog_admin_session', JSON.stringify(SESSION));
+    const empresasAtuais=await DB.empresas();
+    const empresaDoUsuario=empresasAtuais.find(e=>e.company_id===usuario.company_id);
+    _gravarSessaoCompartilhada(usuario, empresaDoUsuario?empresaDoUsuario.razao_social:usuario.company_id);
     await DB.log('LOGIN','Login: '+login,usuario.company_id);
     console.log('[YALOG] Login efetuado');
     toast('Bem-vindo, '+usuario.nome+'!','ok');
@@ -1278,15 +1280,59 @@ async function fazerLogin(){
   finally{ btn.disabled=false; btn.innerHTML='Entrar &rarr;'; }
 }
 
-function carregarSessao(){
-  const s=sessionStorage.getItem('yalog_admin_session');
-  if(s){ try{ SESSION=JSON.parse(s); return true; }catch(e){} }
-  return false;
+// ═══════════════════════════════════════════════════════════════
+// SPRINT YALOG-PLATFORM-005 — SESSÃO COMPARTILHADA COM O WMS
+// ───────────────────────────────────────────────────────────────
+// Formato PLANO e mínimo, gravado em localStorage (sobrevive a nova
+// aba/favorito — diferente de sessionStorage, que só herda em
+// navegação na mesma aba). É INDEPENDENTE do SESSION interno da
+// Platform, que continua {user:{...}} em todo o resto do código —
+// nenhuma regra de negócio da Platform muda por causa disto.
+// O WMS já procura exatamente por esta chave, neste formato.
+// ═══════════════════════════════════════════════════════════════
+function _gravarSessaoCompartilhada(usuario, empresaRazaoSocial){
+  try{
+    localStorage.setItem(
+      "yalog_admin_session",
+      JSON.stringify({
+        login: usuario.login,
+        nome: usuario.nome,
+        role: usuario.role,
+        company_id: usuario.company_id,
+        empresa: empresaRazaoSocial,
+        timestamp: Date.now()
+      })
+    );
+  }catch(e){ console.warn('[YALOG] Falha ao gravar sessão compartilhada:', e); }
+}
+
+async function carregarSessao(){
+  try{
+    const raw=localStorage.getItem('yalog_admin_session');
+    if(!raw) return false;
+    const compartilhada=JSON.parse(raw);
+    if(!compartilhada||!compartilhada.company_id||!compartilhada.login) return false;
+
+    // Valida se a sessão ainda é válida: o usuário precisa existir e
+    // estar ativo. O objeto salvo é o resumo plano compartilhado com o
+    // WMS — não a fonte de verdade — então o SESSION interno completo
+    // (com senha_hash etc., usado pelo resto da Platform) é sempre
+    // reidratado a partir do registro real em DB.usuarios().
+    const usuarios=await DB.usuarios();
+    const usuario=usuarios.find(u=>u.company_id===compartilhada.company_id && u.login===compartilhada.login);
+    if(!usuario || usuario.ativo===false) return false;
+
+    SESSION={ user:usuario };
+    const empresas=await DB.empresas();
+    const empresaAtual=empresas.find(e=>e.company_id===usuario.company_id);
+    _gravarSessaoCompartilhada(usuario, empresaAtual?empresaAtual.razao_social:usuario.company_id); // atualiza timestamp
+    return true;
+  }catch(e){ console.warn('[YALOG] Falha ao restaurar sessão compartilhada:', e); return false; }
 }
 async function logout(){
   if(SESSION) await DB.log('LOGOUT','Logout: '+SESSION.user.login,SESSION.user.company_id);
   SESSION=null;
-  sessionStorage.removeItem('yalog_admin_session');
+  localStorage.removeItem("yalog_admin_session");
   document.getElementById('app').style.display='none';
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('log_login').value='';
@@ -1722,7 +1768,6 @@ async function alterarSenha(){
   const novaHash=await hashSenha(nova);
   await DB.updateUsuario(SESSION.user.company_id,SESSION.user.login,{senha_hash:novaHash});
   SESSION.user.senha_hash=novaHash;
-  sessionStorage.setItem('yalog_admin_session',JSON.stringify(SESSION));
   await DB.log('ALTERACAO_SENHA','Senha alterada: '+SESSION.user.login,SESSION.user.company_id);
   toast('Senha alterada','ok');
   ['pf_atual','pf_nova','pf_nova2'].forEach(id=>document.getElementById(id).value='');
@@ -1780,7 +1825,7 @@ async function alterarSenha(){
 
   // Restaura sessão / mostra login (protegido)
   try{
-    if(carregarSessao()){ entrarApp(); }
+    if(await carregarSessao()){ entrarApp(); }
     else {
       const ls=document.getElementById('login-screen');
       if(ls) ls.style.display='flex';
