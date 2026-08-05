@@ -968,6 +968,99 @@ const LS = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// COMPATIBILIDADE DE BANCO (Sprint YALOG-PLATFORM-008)
+// Objetivo: diferença de schema entre o HTML e o Supabase (coluna
+// nova que a Platform já sabe gravar mas o banco ainda não tem)
+// NUNCA pode derrubar a Platform para MODO OFFLINE, interromper a
+// sincronização, perder a sessão ou bloquear o usuário. Só perda real
+// de conexão, timeout, Supabase indisponível ou erro de autenticação
+// mudam o modo para offline (ver withFallback/processarFilaSync).
+// ═══════════════════════════════════════════════════════════════
+
+// 1) UPDATE Inteligente — remove undefined (nunca deve ser enviado).
+function limparCampos(obj){
+  const limpo={};
+  Object.keys(obj||{}).forEach(k=>{
+    if(obj[k]===undefined)return;
+    limpo[k]=obj[k];
+  });
+  return limpo;
+}
+// Remove também null — só usado onde nenhum campo depende de null
+// como valor de negócio (usuarios/empresas). NÃO é aplicado em
+// licencas/modulos, onde null é usado de propósito hoje (ex.:
+// "validade" vazia limpa a data; "liberado_em" null ao bloquear um
+// módulo) — remover indiscriminadamente mudaria essas regras já
+// existentes, o que esta Sprint não deve fazer.
+function limparCamposENulos(obj){
+  const limpo={};
+  Object.keys(obj||{}).forEach(k=>{
+    const v=obj[k];
+    if(v===undefined||v===null)return;
+    limpo[k]=v;
+  });
+  return limpo;
+}
+
+// Registro de campos já identificados como inexistentes no banco,
+// por tabela — assim que um é detectado, toda gravação seguinte na
+// mesma tabela já nasce sem ele (nunca tenta de novo até a migração
+// real ser aplicada no Supabase). Vive só na sessão atual (não precisa
+// persistir — se a coluna ainda não existir na próxima abertura, o
+// mesmo fluxo detecta de novo, sem drama).
+const CAMPOS_INCOMPATIVEIS={}; // { tabela: Set(['coluna1', ...]) }
+
+// Erro típico do PostgREST/Supabase para coluna inexistente:
+// code 'PGRST204' e mensagem "Could not find the 'x' column of 'y' in
+// the schema cache". Detecta por code OU por texto, para cobrir
+// variações de versão do PostgREST.
+function ehErroDeSchema(erro){
+  if(!erro)return false;
+  const msg=String((erro&&(erro.message||erro.details))||erro||'').toLowerCase();
+  return erro.code==='PGRST204'
+    || (msg.includes('could not find')&&msg.includes('column'))
+    || msg.includes('schema cache');
+}
+function extrairCampoDoErro(erro){
+  const msg=String((erro&&(erro.message||erro.details))||erro||'');
+  const m=msg.match(/'([^']+)'\s*column/i) || msg.match(/column\s+"?([a-zA-Z0-9_]+)"?/i);
+  return m?m[1]:null;
+}
+// Função central pedida na Sprint: identifica o campo inexistente,
+// registra o aviso (console + auditoria, item 7) e memoriza o campo
+// para ignorar até futura migração. Nunca interrompe a Platform.
+function validarCompatibilidadeBanco(tabela, erro){
+  const campo=extrairCampoDoErro(erro)||'(campo não identificado)';
+  if(!CAMPOS_INCOMPATIVEIS[tabela])CAMPOS_INCOMPATIVEIS[tabela]=new Set();
+  CAMPOS_INCOMPATIVEIS[tabela].add(campo);
+  // Formato exato pedido no item 7 — sem mensagem de erro para o usuário.
+  console.warn('[YALOG]\nCampo ignorado por incompatibilidade de versão:\n'+campo);
+  try{
+    DB.log('WARNING','[YALOG] Campo ignorado por incompatibilidade de versão: '+campo+' (tabela: '+tabela+')').catch(()=>{});
+  }catch(e){/* auditoria é best-effort — nunca bloqueia o fluxo principal */}
+  return campo;
+}
+// Remove de um objeto os campos já sabidamente incompatíveis com a
+// tabela — usado antes de toda gravação, para nunca tentar de novo um
+// campo que o banco já provou não ter (item 8 — compatibilidade
+// futura automática).
+function removerCamposIncompativeis(tabela, obj){
+  const incompat=CAMPOS_INCOMPATIVEIS[tabela];
+  if(!incompat||!incompat.size)return obj;
+  const limpo={...obj};
+  incompat.forEach(c=>{ delete limpo[c]; });
+  return limpo;
+}
+// Prepara um patch/payload de gravação: sempre remove undefined e
+// qualquer campo já sabidamente incompatível com a tabela de destino;
+// remove null também quando removerNulos=true (só onde é seguro —
+// ver limparCamposENulos acima).
+function prepararPayload(tabela, obj, removerNulos){
+  const base=removerNulos?limparCamposENulos(obj):limparCampos(obj);
+  return removerCamposIncompativeis(tabela, base);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // FILA DE SINCRONIZAÇÃO (Sprint YALOG-PLATFORM-003)
 // Toda gravação que cai para o localStorage (Supabase indisponível)
 // é registrada aqui. Quando a conexão volta, processarFilaSync()
@@ -983,18 +1076,40 @@ function enfileirar(tabela, operacao, payload, match){
 function getUltimaSync(){ return localStorage.getItem('yalog_ultima_sync'); }
 function setUltimaSync(iso){ localStorage.setItem('yalog_ultima_sync', iso); }
 
-// Executa a chamada ao Supabase; se falhar por qualquer motivo (rede
-// caiu no meio da sessão, tabela ausente, chave incorreta etc.), cai
-// automaticamente para o localStorage em vez de quebrar a tela — a
-// troca fica invisível para quem está usando o sistema. Quando a
+// Executa a chamada ao Supabase. Sprint YALOG-PLATFORM-008: diferença
+// de schema (coluna que a Platform já sabe gravar mas o banco ainda
+// não tem) NUNCA é tratada como perda de conexão — é detectada,
+// registrada via validarCompatibilidadeBanco() e a mesma gravação é
+// tentada de novo sem o campo problemático, sem sair do modo Supabase.
+// Só erro real (rede caiu, timeout, Supabase indisponível, auth) cai
+// para o localStorage e marca SUPABASE_ONLINE=false. Quando a
 // gravação cai para local, e filaOp foi informado, ela é enfileirada
 // para ser replicada ao Supabase assim que a conexão voltar.
 async function withFallback(supabaseFn, localFn, filaOp){
   if(!OFF()){
-    try{ return await supabaseFn(); }
-    catch(e){
-      console.warn('[YALOG] Falha no Supabase, usando localStorage:', e.message||e);
-      SUPABASE_ONLINE=false;
+    let tentativas=0;
+    while(tentativas<5){
+      try{ return await supabaseFn(); }
+      catch(e){
+        if(ehErroDeSchema(e)){
+          const tabela=(filaOp&&filaOp.tabela)||'—';
+          const campo=validarCompatibilidadeBanco(tabela, e);
+          if(filaOp&&filaOp.payload&&campo&&Object.prototype.hasOwnProperty.call(filaOp.payload,campo)){
+            // Mesma referência que o supabaseFn já usa por closure —
+            // a próxima chamada já sai sem o campo incompatível.
+            delete filaOp.payload[campo];
+            tentativas++;
+            continue;
+          }
+          // Sem campo identificável para remover (ex.: leitura, ou
+          // payload indisponível) — só registra o aviso e segue em
+          // frente sem sair do modo Supabase.
+          break;
+        }
+        console.warn('[YALOG] Falha no Supabase, usando localStorage:', e.message||e);
+        SUPABASE_ONLINE=false;
+        break;
+      }
     }
   }
   const resultado = localFn();
@@ -1003,36 +1118,65 @@ async function withFallback(supabaseFn, localFn, filaOp){
 }
 
 // Reaplica a fila pendente contra o Supabase, em ordem (FIFO), parando
-// no primeiro erro para nunca gravar fora de ordem (ex.: licença antes
-// da empresa que ela referencia). Chamada automaticamente pelo monitor
-// de conexão e manualmente pelo botão "Sincronizar Agora".
+// no primeiro erro REAL para nunca gravar fora de ordem (ex.: licença
+// antes da empresa que ela referencia). Chamada automaticamente pelo
+// monitor de conexão e manualmente pelo botão "Sincronizar Agora".
+// Sprint YALOG-PLATFORM-008: incompatibilidade de schema não é mais
+// um erro real — o campo é removido do item, a gravação é tentada de
+// novo, e a fila continua para os próximos itens normalmente.
+async function _executarOperacaoSupabase(tabela, operacao, payload, match){
+  if(operacao==='insert'){
+    const {error}=await supabaseClient.from(tabela).insert([payload]);
+    if(error) throw error;
+  } else if(operacao==='upsert'){
+    const {error}=await supabaseClient.from(tabela).upsert(payload,{onConflict:(match&&match.onConflict)});
+    if(error) throw error;
+  } else if(operacao==='update'){
+    let q=supabaseClient.from(tabela).update(payload);
+    Object.entries(match||{}).forEach(([k,v])=>{ q=q.eq(k,v); });
+    const {error}=await q;
+    if(error) throw error;
+  }
+}
 async function processarFilaSync(){
   if(OFF() || !supabaseClient) return { ok:false, motivo:'offline', processados:0 };
   let fila=getFila();
   if(!fila.length) return { ok:true, processados:0 };
   let processados=0;
   for(const item of fila.slice()){
-    try{
-      if(item.operacao==='insert'){
-        const {error}=await supabaseClient.from(item.tabela).insert([item.payload]);
-        if(error) throw error;
-      } else if(item.operacao==='upsert'){
-        const {error}=await supabaseClient.from(item.tabela).upsert(item.payload,{onConflict:(item.match&&item.match.onConflict)});
-        if(error) throw error;
-      } else if(item.operacao==='update'){
-        let q=supabaseClient.from(item.tabela).update(item.payload);
-        Object.entries(item.match||{}).forEach(([k,v])=>{ q=q.eq(k,v); });
-        const {error}=await q;
-        if(error) throw error;
+    let tentativas=0, sucesso=false, erroReal=null;
+    while(tentativas<5 && !sucesso){
+      try{
+        await _executarOperacaoSupabase(item.tabela, item.operacao, item.payload, item.match);
+        sucesso=true;
+      }catch(e){
+        if(ehErroDeSchema(e)){
+          const campo=validarCompatibilidadeBanco(item.tabela, e);
+          if(campo&&item.payload&&Object.prototype.hasOwnProperty.call(item.payload,campo)){
+            delete item.payload[campo];
+            tentativas++;
+            continue;
+          }
+          break; // sem campo identificável — mantém o item na fila, sem derrubar os demais
+        }
+        erroReal=e;
+        break;
       }
+    }
+    if(sucesso){
       fila=fila.filter(f=>f.id!==item.id);
       setFila(fila);
       processados++;
-    }catch(e){
-      console.warn('[YALOG] Sync pendente falhou, mantendo na fila:', e.message||e);
+      continue;
+    }
+    if(erroReal){
+      console.warn('[YALOG] Sync pendente falhou, mantendo na fila:', erroReal.message||erroReal);
       SUPABASE_ONLINE=false;
       return { ok:false, processados, restante:fila.length };
     }
+    // Incompatibilidade de schema não resolvível automaticamente para
+    // este item — segue para os próximos, sem tirar a Platform do
+    // modo Supabase (item continua na fila até a migração futura).
   }
   setUltimaSync(new Date().toISOString());
   return { ok:true, processados };
@@ -1046,6 +1190,7 @@ const DB = {
     );
   },
   async addEmpresa(e){
+    e=prepararPayload('empresas', e, true);
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('empresas').insert([e]).select().single(); if(error)throw error; return data; },
       ()=>{ const a=LS.get('empresas'); a.push(e); LS.set('empresas',a); return e; },
@@ -1053,6 +1198,7 @@ const DB = {
     );
   },
   async updateEmpresa(companyId, patch){
+    patch=prepararPayload('empresas', patch, true);
     return withFallback(
       async ()=>{ const {error}=await supabaseClient.from('empresas').update(patch).eq('company_id',companyId); if(error)throw error; },
       ()=>{ const a=LS.get('empresas'); const i=a.findIndex(x=>x.company_id===companyId); if(i>=0){a[i]={...a[i],...patch};LS.set('empresas',a);} },
@@ -1066,6 +1212,7 @@ const DB = {
     );
   },
   async addUsuario(u){
+    u=prepararPayload('usuarios', u, true);
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('usuarios').insert([u]).select().single(); if(error)throw error; return data; },
       ()=>{ const a=LS.get('usuarios'); a.push(u); LS.set('usuarios',a); return u; },
@@ -1073,6 +1220,7 @@ const DB = {
     );
   },
   async updateUsuario(companyId, login, patch){
+    patch=prepararPayload('usuarios', patch, true);
     return withFallback(
       async ()=>{ const {error}=await supabaseClient.from('usuarios').update(patch).eq('company_id',companyId).eq('login',login); if(error)throw error; },
       ()=>{ const a=LS.get('usuarios'); const i=a.findIndex(x=>x.company_id===companyId&&x.login===login); if(i>=0){a[i]={...a[i],...patch};LS.set('usuarios',a);} },
@@ -1086,6 +1234,7 @@ const DB = {
     );
   },
   async addLicenca(l){
+    l=prepararPayload('licencas', l);
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('licencas').insert([l]).select().single(); if(error)throw error; return data; },
       ()=>{ const a=LS.get('licencas'); a.push(l); LS.set('licencas',a); return l; },
@@ -1093,7 +1242,7 @@ const DB = {
     );
   },
   async updateLicenca(companyId, patch){
-    const row={...patch, company_id:companyId};
+    const row=prepararPayload('licencas', {...patch, company_id:companyId});
     return withFallback(
       async ()=>{ const {error}=await supabaseClient.from('licencas').upsert(row,{onConflict:'company_id'}); if(error)throw error; },
       ()=>{ const a=LS.get('licencas'); const i=a.findIndex(x=>x.company_id===companyId); if(i>=0){a[i]={...a[i],...row};} else {a.push(row);} LS.set('licencas',a); },
@@ -1107,7 +1256,7 @@ const DB = {
     );
   },
   async setModulo(companyId, modulo, status){
-    const row={company_id:companyId,modulo,status,liberado_em:status==='LIBERADO'?new Date().toISOString():null};
+    const row=prepararPayload('modulos', {company_id:companyId,modulo,status,liberado_em:status==='LIBERADO'?new Date().toISOString():null});
     return withFallback(
       async ()=>{ const {error}=await supabaseClient.from('modulos').upsert(row,{onConflict:'company_id,modulo'}); if(error)throw error; },
       ()=>{ const a=LS.get('modulos'); const i=a.findIndex(x=>x.company_id===companyId&&x.modulo===modulo); if(i>=0)a[i]=row; else a.push(row); LS.set('modulos',a); },
@@ -1115,7 +1264,7 @@ const DB = {
     );
   },
   async log(tipo,detalhe,companyId){
-    const entry={tipo,detalhe:detalhe||'',company_id:companyId||null,created_at:new Date().toISOString()};
+    const entry=prepararPayload('logs', {tipo,detalhe:detalhe||'',company_id:companyId||null,created_at:new Date().toISOString()});
     return withFallback(
       async ()=>{ const {error}=await supabaseClient.from('logs').insert([entry]); if(error)throw error; },
       ()=>{ const a=LS.get('logs'); a.push(entry); LS.set('logs',a.slice(-1000)); },
