@@ -227,6 +227,7 @@ a{color:inherit;text-decoration:none;}
 .sp-lib{background:rgba(74,222,128,.1);color:#4ade80;}.sp-lib::before{background:#4ade80;}
 .sp-blk{background:rgba(248,113,113,.1);color:#f87171;}.sp-blk::before{background:#f87171;}
 .sp-pen{background:rgba(251,191,36,.1);color:#fbbf24;}.sp-pen::before{background:#fbbf24;}
+.sp-can{background:rgba(148,163,184,.12);color:#94a3b8;}.sp-can::before{background:#94a3b8;}
 .sp-exp{background:rgba(45,212,191,.1);color:#2dd4bf;}.sp-exp::before{background:#2dd4bf;}
 .sp-ok{background:rgba(74,222,128,.1);color:#4ade80;}.sp-ok::before{background:#4ade80;}
 
@@ -536,14 +537,44 @@ a{color:inherit;text-decoration:none;}
           </div>
         </div>
 
-        <!-- CLIENTES -->
+        <!-- CLIENTES / EMPRESAS -->
         <div class="screen" id="s-clientes">
           <div class="ph">
-            <div><div class="ph-eye">Gestão</div><div class="ph-title">Clientes</div></div>
-            <button class="btn btn-p" onclick="abrirModalCliente()">+ Novo Cliente</button>
+            <div><div class="ph-eye">Gestão</div><div class="ph-title">Empresas</div></div>
+            <button class="btn btn-p" onclick="abrirModalCliente()">+ Nova Empresa</button>
+          </div>
+          <!-- Sprint YALOG-PLATFORM-007, item 5: resumo operacional -->
+          <div class="kpi-grid" id="empresasResumoKpis" style="margin-bottom:16px;"></div>
+          <!-- item 1/13: pesquisa e filtro em tempo real, só sobre os
+               dados já carregados (_empresasFiltroCache) — nunca uma
+               nova consulta ao Supabase por tecla. -->
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+            <div style="position:relative;display:flex;align-items:center;">
+              <span style="position:absolute;left:10px;color:var(--w40);font-size:13px;pointer-events:none;">🔍</span>
+              <input type="text" id="empFiltroRazao" placeholder="Razão Social..." oninput="filtrarEmpresas()" style="padding:8px 12px 8px 32px;background:var(--bg3);border:1px solid var(--border2);color:var(--w);font-family:var(--sans);font-size:11px;width:180px;outline:none;" onfocus="this.style.borderColor='var(--orange)'" onblur="this.style.borderColor='var(--border2)'">
+            </div>
+            <div style="position:relative;display:flex;align-items:center;">
+              <span style="position:absolute;left:10px;color:var(--w40);font-size:13px;pointer-events:none;">🔍</span>
+              <input type="text" id="empFiltroFantasia" placeholder="Nome Fantasia..." oninput="filtrarEmpresas()" style="padding:8px 12px 8px 32px;background:var(--bg3);border:1px solid var(--border2);color:var(--w);font-family:var(--sans);font-size:11px;width:180px;outline:none;" onfocus="this.style.borderColor='var(--orange)'" onblur="this.style.borderColor='var(--border2)'">
+            </div>
+            <div style="position:relative;display:flex;align-items:center;">
+              <span style="position:absolute;left:10px;color:var(--w40);font-size:13px;pointer-events:none;">🔍</span>
+              <input type="text" id="empFiltroCompanyId" placeholder="Company ID..." oninput="filtrarEmpresas()" style="padding:8px 12px 8px 32px;background:var(--bg3);border:1px solid var(--border2);color:var(--w);font-family:var(--sans);font-size:11px;width:150px;outline:none;" onfocus="this.style.borderColor='var(--orange)'" onblur="this.style.borderColor='var(--border2)'">
+            </div>
+            <div style="position:relative;display:flex;align-items:center;">
+              <span style="position:absolute;left:10px;color:var(--w40);font-size:13px;pointer-events:none;">🔍</span>
+              <input type="text" id="empFiltroCnpj" placeholder="CNPJ..." oninput="filtrarEmpresas()" style="padding:8px 12px 8px 32px;background:var(--bg3);border:1px solid var(--border2);color:var(--w);font-family:var(--sans);font-size:11px;width:150px;outline:none;" onfocus="this.style.borderColor='var(--orange)'" onblur="this.style.borderColor='var(--border2)'">
+            </div>
+            <select id="empFiltroStatus" onchange="filtrarEmpresas()" class="btn btn-o" style="font-size:10px;cursor:pointer;padding:9px 14px;">
+              <option value="">Todas</option>
+              <option value="ATIVA">Ativa</option>
+              <option value="BLOQUEADA">Bloqueada</option>
+              <option value="IMPLANTACAO">Em implantação</option>
+              <option value="CANCELADA">Cancelada</option>
+            </select>
           </div>
           <div class="card"><table class="dt"><thead><tr>
-            <th>Company ID</th><th>Razão Social</th><th>CNPJ</th><th>Responsável</th><th>Plano</th><th>Licença</th><th>Ações</th>
+            <th>Company ID</th><th>Razão Social</th><th>CNPJ</th><th>Responsável</th><th>Plano</th><th>Licença</th><th>Status</th><th>Ações</th>
           </tr></thead><tbody id="tbClientes"></tbody></table></div>
         </div>
 
@@ -653,7 +684,7 @@ a{color:inherit;text-decoration:none;}
 <!-- ═══ MODAIS — usam .mo / .md / .mc / .mt / .ms do Design System ═══ -->
 <div class="mo" id="mCliente"><div class="md">
   <button class="mc" onclick="fecharModal('mCliente')">&#10005;</button>
-  <div class="mt">Novo Cliente</div>
+  <div class="mt">Nova Empresa</div>
   <div class="ms">Company ID gerado automaticamente</div>
   <div class="fg"><label>Razão Social *</label><input id="cli_razao"></div>
   <div class="fg"><label>Nome Fantasia</label><input id="cli_fantasia"></div>
@@ -661,7 +692,38 @@ a{color:inherit;text-decoration:none;}
   <div class="fg"><label>Responsável *</label><input id="cli_resp"></div>
   <div class="fg"><label>Email *</label><input id="cli_email" type="email"></div>
   <div class="fg"><label>Telefone</label><input id="cli_tel" oninput="maskTel(this)"></div>
-  <button class="btn btn-p" style="width:100%;justify-content:center;" onclick="salvarCliente()">Cadastrar Cliente</button>
+  <div class="fg"><label>Status</label>
+    <select id="cli_status">
+      <option value="ATIVA">Ativa</option>
+      <option value="IMPLANTACAO">Em implantação</option>
+    </select>
+  </div>
+  <button class="btn btn-p" style="width:100%;justify-content:center;" onclick="salvarCliente()">Cadastrar Empresa</button>
+</div></div>
+
+<!-- Sprint YALOG-PLATFORM-007, item 3: editar dados cadastrais da
+     empresa — Company ID nunca aparece como campo editável (item 2/12). -->
+<div class="mo" id="mEditarEmpresa"><div class="md">
+  <button class="mc" onclick="fecharModal('mEditarEmpresa')">&#10005;</button>
+  <div class="mt">Editar Empresa</div>
+  <div class="ms">Company ID: <b id="edEmp_companyIdView" style="font-family:var(--mono);color:var(--orange2);"></b></div>
+  <input type="hidden" id="edEmp_companyId">
+  <div class="fg"><label>Razão Social *</label><input id="edEmp_razao"></div>
+  <div class="fg"><label>Nome Fantasia</label><input id="edEmp_fantasia"></div>
+  <div class="fg"><label>CNPJ *</label><input id="edEmp_cnpj" oninput="maskCNPJ(this)"></div>
+  <div class="fg"><label>Responsável *</label><input id="edEmp_resp"></div>
+  <div class="fg"><label>Email *</label><input id="edEmp_email" type="email"></div>
+  <div class="fg"><label>Telefone</label><input id="edEmp_tel" oninput="maskTel(this)"></div>
+  <button class="btn btn-p" style="width:100%;justify-content:center;" onclick="salvarEdicaoEmpresa()">Salvar Alterações</button>
+</div></div>
+
+<!-- Sprint YALOG-PLATFORM-007, item 4: Dashboard da Empresa — só
+     leitura, mesmo padrão kpi-grid/kc/kl/kv já usado no Dashboard geral. -->
+<div class="mo" id="mDashboardEmpresa"><div class="md md-wide" style="max-width:640px;">
+  <button class="mc" onclick="fecharModal('mDashboardEmpresa')">&#10005;</button>
+  <div class="mt" id="dashEmp_titulo">Dashboard da Empresa</div>
+  <div class="ms" id="dashEmp_subtitulo"></div>
+  <div class="kpi-grid" id="dashEmp_grid" style="margin-top:6px;"></div>
 </div></div>
 
 <div class="mo" id="mUsuario"><div class="md">
@@ -883,7 +945,7 @@ const MODULOS = [
 // Itens de menu por perfil
 const MENU = [
   { id:'dashboard', label:'Dashboard',     icon:'◱', roles:['SUPER_ADMIN','GESTOR','MASTER','USUARIO'] },
-  { id:'clientes',  label:'Clientes',      icon:'🏢', roles:['SUPER_ADMIN','GESTOR'] },
+  { id:'clientes',  label:'Empresas',      icon:'🏢', roles:['SUPER_ADMIN','GESTOR'] },
   { id:'usuarios',  label:'Usuários',      icon:'👥', roles:['SUPER_ADMIN','GESTOR','MASTER'] },
   { id:'licencas',  label:'Licenças',      icon:'📜', roles:['SUPER_ADMIN','GESTOR'] },
   { id:'modulos',   label:'Módulos',       icon:'🧩', roles:['SUPER_ADMIN','GESTOR','MASTER'] },
@@ -1460,6 +1522,25 @@ async function fazerLogin(){
 
     SESSION={ user:usuario };
     const empresasAtuais=await DB.empresas();
+    // Sprint YALOG-PLATFORM-007, item 9: empresa bloqueada/cancelada
+    // nega login a Master/Usuário — SUPER_ADMIN/GESTOR (equipe YALog)
+    // nunca são bloqueados por isso, pois precisam continuar acessando
+    // pra reativar a empresa.
+    if(usuario.role==='MASTER'||usuario.role==='USUARIO'){
+      const empresaDoUsuarioCheck=empresasAtuais.find(e=>e.company_id===usuario.company_id);
+      if(empresaDoUsuarioCheck && empresaDoUsuarioCheck.status==='BLOQUEADA'){
+        SESSION=null;
+        toast('Empresa bloqueada. Entre em contato com a YALog.','err');
+        await DB.log('FALHA','Login negado — empresa bloqueada: '+login, usuario.company_id);
+        return;
+      }
+      if(empresaDoUsuarioCheck && empresaDoUsuarioCheck.status==='CANCELADA'){
+        SESSION=null;
+        toast('Empresa cancelada. Entre em contato com a YALog.','err');
+        await DB.log('FALHA','Login negado — empresa cancelada: '+login, usuario.company_id);
+        return;
+      }
+    }
     const empresaDoUsuario=empresasAtuais.find(e=>e.company_id===usuario.company_id);
     _gravarSessaoCompartilhada(usuario, empresaDoUsuario?empresaDoUsuario.razao_social:usuario.company_id);
     await DB.log('LOGIN','Login: '+login,usuario.company_id);
@@ -1551,6 +1632,7 @@ function can(acao){
   const r=SESSION.user.role;
   const P={
     cadastrarCliente:['SUPER_ADMIN','GESTOR'],
+    gerenciarEmpresa:['SUPER_ADMIN','GESTOR'],
     cadastrarGestor:['SUPER_ADMIN'],
     cadastrarMaster:['SUPER_ADMIN','GESTOR'],
     cadastrarUsuario:['SUPER_ADMIN','GESTOR','MASTER'],
@@ -1618,12 +1700,25 @@ async function renderDashboard(){
   const empV=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
   const usrV=escopo?usuarios.filter(u=>u.company_id===escopo):usuarios;
   const ativas=empV.filter(e=>((licMap[e.company_id]||{}).status||'ATIVA')==='ATIVA').length;
+  // Sprint YALOG-PLATFORM-007, item 10: "online"/"offline" definido
+  // pelo status da própria empresa (ATIVA = online; qualquer outro
+  // status = offline) — não há telemetria de conexão em tempo real
+  // nesta arquitetura (blob sincronizado, sem heartbeat por empresa).
+  const empOnline=empV.filter(e=>(e.status||'ATIVA')==='ATIVA').length;
+  const empOffline=empV.length-empOnline;
+  const empBloqueadas=empV.filter(e=>e.status==='BLOQUEADA').length;
+  const mastersCount=usrV.filter(u=>u.role==='MASTER').length;
+  const modAtivosCount=(await DB.modulos()).filter(m=>(!escopo||m.company_id===escopo)&&m.status==='LIBERADO').length;
 
   document.getElementById('dashKpis').innerHTML=`
-    <div class="kc"><span class="ki">🏢</span><div class="kv">${empV.length}</div><div class="kl">Clientes</div></div>
+    <div class="kc"><span class="ki">🏢</span><div class="kv">${empV.length}</div><div class="kl">Empresas</div></div>
+    <div class="kc"><span class="ki">📜</span><div class="kv" style="color:var(--g2);">${ativas}</div><div class="kl">Licenças</div></div>
+    <div class="kc"><span class="ki">👤</span><div class="kv">${mastersCount}</div><div class="kl">Masters</div></div>
     <div class="kc"><span class="ki">👥</span><div class="kv">${usrV.length}</div><div class="kl">Usuários</div></div>
-    <div class="kc"><span class="ki">📜</span><div class="kv" style="color:var(--g2);">${ativas}</div><div class="kl">Licenças Ativas</div></div>
-    <div class="kc"><span class="ki">🧩</span><div class="kv" style="color:var(--b2);">${MODULOS.length}</div><div class="kl">Módulos</div></div>`;
+    <div class="kc"><span class="ki">🧩</span><div class="kv" style="color:var(--b2);">${modAtivosCount}</div><div class="kl">Módulos</div></div>
+    <div class="kc"><span class="ki">🟢</span><div class="kv" style="color:var(--g2);">${empOnline}</div><div class="kl">Empresas Online</div></div>
+    <div class="kc"><span class="ki">⚪</span><div class="kv">${empOffline}</div><div class="kl">Empresas Offline</div></div>
+    <div class="kc"><span class="ki">🔴</span><div class="kv" style="color:var(--r2);">${empBloqueadas}</div><div class="kl">Empresas Bloqueadas</div></div>`;
 
   document.getElementById('dashModulos').innerHTML=MODULOS.map(m=>{
     const active=m.id==='wms';
@@ -1636,25 +1731,96 @@ async function renderDashboard(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// CLIENTES
+// CLIENTES / EMPRESAS (Sprint YALOG-PLATFORM-007)
 // ═══════════════════════════════════════════════════════════════
+// Auditoria dedicada — sempre Company ID/Empresa/Usuário responsável
+// (a Data/Hora já vem do created_at da própria linha de log).
+async function _auditoriaEmpresa(acao, emp){
+  const responsavel=SESSION?(SESSION.user.nome+' ('+SESSION.user.login+')'):'—';
+  await DB.log(acao, 'Empresa: '+emp.razao_social+' ('+emp.company_id+') — Responsável: '+responsavel, emp.company_id);
+}
+function statusEmpresaBadge(status){
+  const s=status||'ATIVA';
+  if(s==='ATIVA')return '<span class="sp sp-lib">Ativa</span>';
+  if(s==='BLOQUEADA')return '<span class="sp sp-blk">Bloqueada</span>';
+  if(s==='IMPLANTACAO')return '<span class="sp sp-pen">Em implantação</span>';
+  if(s==='CANCELADA')return '<span class="sp sp-can">Cancelada</span>';
+  return '<span class="sp sp-pen">'+s+'</span>';
+}
+// Cache da última leitura — item 13/1: pesquisa/filtro em tempo real
+// atuam só sobre esses arrays já carregados, nunca disparam nova
+// consulta ao Supabase por tecla.
+let _empresasCache=[], _licencasCache=[], _usuariosCache=[];
 async function renderClientes(){
-  const empresas=await DB.empresas();
-  const licencas=await DB.licencas();
-  const licMap={}; licencas.forEach(l=>licMap[l.company_id]=l);
+  _empresasCache=await DB.empresas();
+  _licencasCache=await DB.licencas();
+  _usuariosCache=await DB.usuarios();
   const escopo=escopoEmpresa();
-  const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
+  if(escopo){ _empresasCache=_empresasCache.filter(e=>e.company_id===escopo); }
+
+  // item 5: resumo operacional
+  const licMapResumo={}; _licencasCache.forEach(l=>licMapResumo[l.company_id]=l);
+  const escopoUsr=escopo?_usuariosCache.filter(u=>u.company_id===escopo):_usuariosCache;
+  const licUtilizadas=_empresasCache.filter(e=>(licMapResumo[e.company_id]||{}).status==='ATIVA').length;
+  const licDisponiveis=_empresasCache.length-licUtilizadas;
+  let modAtivos=0, modBloqueados=0;
+  (await DB.modulos()).filter(m=>!escopo||m.company_id===escopo).forEach(m=>m.status==='LIBERADO'?modAtivos++:modBloqueados++);
+  const mastersCount=escopoUsr.filter(u=>u.role==='MASTER').length;
+  document.getElementById('empresasResumoKpis').innerHTML=`
+    <div class="kc"><span class="ki">📜</span><div class="kv" style="color:var(--g2);">${licUtilizadas}</div><div class="kl">Licenças Utilizadas</div></div>
+    <div class="kc"><span class="ki">📜</span><div class="kv">${licDisponiveis}</div><div class="kl">Licenças Disponíveis</div></div>
+    <div class="kc"><span class="ki">🧩</span><div class="kv" style="color:var(--g2);">${modAtivos}</div><div class="kl">Módulos Ativos</div></div>
+    <div class="kc"><span class="ki">🧩</span><div class="kv" style="color:var(--r2);">${modBloqueados}</div><div class="kl">Módulos Bloqueados</div></div>
+    <div class="kc"><span class="ki">👤</span><div class="kv">${mastersCount}</div><div class="kl">Usuários Master</div></div>
+    <div class="kc"><span class="ki">🏢</span><div class="kv" style="color:var(--g2);">${_empresasCache.filter(e=>(e.status||'ATIVA')==='ATIVA').length}</div><div class="kl">Empresas Ativas</div></div>
+    <div class="kc"><span class="ki">🏢</span><div class="kv" style="color:var(--r2);">${_empresasCache.filter(e=>e.status==='BLOQUEADA').length}</div><div class="kl">Empresas Bloqueadas</div></div>
+    <div class="kc"><span class="ki">🏢</span><div class="kv" style="color:var(--y2, #fbbf24);">${_empresasCache.filter(e=>e.status==='IMPLANTACAO').length}</div><div class="kl">Em Implantação</div></div>`;
+
+  filtrarEmpresas();
+}
+// item 1/13: filtro 100% client-side, sobre _empresasCache já carregado.
+function filtrarEmpresas(){
+  const fRazao=(document.getElementById('empFiltroRazao')?.value||'').trim().toLowerCase();
+  const fFantasia=(document.getElementById('empFiltroFantasia')?.value||'').trim().toLowerCase();
+  const fCompanyId=(document.getElementById('empFiltroCompanyId')?.value||'').trim().toLowerCase();
+  const fCnpj=(document.getElementById('empFiltroCnpj')?.value||'').replace(/\D/g,'');
+  const fStatus=document.getElementById('empFiltroStatus')?.value||'';
+
+  let lista=_empresasCache;
+  if(fRazao)lista=lista.filter(e=>(e.razao_social||'').toLowerCase().includes(fRazao));
+  if(fFantasia)lista=lista.filter(e=>(e.nome_fantasia||'').toLowerCase().includes(fFantasia));
+  if(fCompanyId)lista=lista.filter(e=>(e.company_id||'').toLowerCase().includes(fCompanyId));
+  if(fCnpj)lista=lista.filter(e=>(e.cnpj||'').replace(/\D/g,'').includes(fCnpj));
+  if(fStatus)lista=lista.filter(e=>(e.status||'ATIVA')===fStatus);
+
+  const licMap={}; _licencasCache.forEach(l=>licMap[l.company_id]=l);
   const tb=document.getElementById('tbClientes');
-  if(!lista.length){ tb.innerHTML='<tr><td colspan="7"><div class="qs-empty">Nenhum cliente cadastrado.</div></td></tr>'; return; }
+  if(!lista.length){ tb.innerHTML='<tr><td colspan="8"><div class="qs-empty">Nenhuma empresa encontrada.</div></td></tr>'; return; }
+  const podeGerir=can('gerenciarEmpresa');
   tb.innerHTML=lista.map(e=>{
     const lic=licMap[e.company_id]||{};
+    const status=e.status||'ATIVA';
+    let acoesStatus='';
+    if(podeGerir){
+      if(status==='BLOQUEADA'){
+        acoesStatus=`<button class="btn btn-o btn-xs" onclick="reativarEmpresa('${e.company_id}')">Reativar</button>`;
+      }else if(status!=='CANCELADA'){
+        acoesStatus=`<button class="btn btn-r btn-xs" onclick="bloquearEmpresa('${e.company_id}')">Bloquear</button> <button class="btn btn-r btn-xs" onclick="cancelarEmpresa('${e.company_id}')">Cancelar</button>`;
+      }
+    }
     return `<tr>
-    <td style="font-family:var(--mono);" style="color:var(--orange2);">${e.company_id}</td>
+    <td style="font-family:var(--mono);color:var(--orange2);">${e.company_id}</td>
     <td>${e.razao_social}</td><td style="font-family:var(--mono);">${e.cnpj||'—'}</td>
     <td>${e.responsavel||'—'}</td>
     <td><span class="master-badge">${lic.plano||'FREE'}</span></td>
     <td>${licBadge(lic.status)}</td>
-    <td>${can('editarLicenca')?`<button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Licença</button>`:'—'}</td>
+    <td>${statusEmpresaBadge(status)}</td>
+    <td style="white-space:nowrap;">
+      ${podeGerir?`<button class="btn btn-o btn-xs" onclick="editarEmpresa('${e.company_id}')">Editar</button> `:''}
+      <button class="btn btn-b btn-xs" onclick="abrirDashboardEmpresa('${e.company_id}')">Dashboard</button>
+      ${can('editarLicenca')?` <button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Licença</button>`:''}
+      ${acoesStatus?' '+acoesStatus:''}
+    </td>
   </tr>`;
   }).join('');
 }
@@ -1667,6 +1833,7 @@ function licBadge(s){
 function abrirModalCliente(){
   if(!can('cadastrarCliente')){ toast('Sem permissão','err'); return; }
   ['cli_razao','cli_fantasia','cli_cnpj','cli_resp','cli_email','cli_tel'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('cli_status').value='ATIVA';
   abrirModal('mCliente');
 }
 async function salvarCliente(){
@@ -1675,14 +1842,27 @@ async function salvarCliente(){
   const cnpj=document.getElementById('cli_cnpj').value.trim();
   const resp=document.getElementById('cli_resp').value.trim();
   const email=document.getElementById('cli_email').value.trim();
+  const status=document.getElementById('cli_status').value||'ATIVA';
   if(!razao||!cnpj||!resp||!email){ toast('Preencha os obrigatórios (*)','err'); return; }
-  const companyId=gerarCompanyId();
+
+  // Sprint YALOG-PLATFORM-007, item 6: nunca permitir duplicidade.
+  const empresasAtuais=await DB.empresas();
+  const cnpjDigitos=cnpj.replace(/\D/g,'');
+  if(empresasAtuais.some(e=>(e.cnpj||'').replace(/\D/g,'')===cnpjDigitos)){ toast('Já existe uma empresa com esse CNPJ','err'); return; }
+  if(empresasAtuais.some(e=>(e.razao_social||'').trim().toLowerCase()===razao.toLowerCase())){ toast('Já existe uma empresa com essa Razão Social','err'); return; }
+
+  let companyId=gerarCompanyId();
+  // Company ID é gerado aleatoriamente — colisão é improvável, mas
+  // nunca permitida (item 6/12): tenta de novo em vez de arriscar.
+  let tentativas=0;
+  while(empresasAtuais.some(e=>e.company_id===companyId)&&tentativas<10){ companyId=gerarCompanyId(); tentativas++; }
+
   const emp={
     company_id:companyId, razao_social:razao,
     nome_fantasia:document.getElementById('cli_fantasia').value.trim()||razao,
     cnpj, responsavel:resp, email,
     telefone:document.getElementById('cli_tel').value.trim(),
-    created_at:new Date().toISOString(),
+    status, created_at:new Date().toISOString(), updated_at:new Date().toISOString(),
   };
   try{
     await DB.addEmpresa(emp);
@@ -1693,10 +1873,119 @@ async function salvarCliente(){
     });
     // libera WMS por padrão, demais bloqueados
     for(const m of MODULOS) await DB.setModulo(companyId,m.id,m.id==='wms'?'LIBERADO':'BLOQUEADO');
-    await DB.log('CADASTRO_CLIENTE','Cliente: '+razao+' ('+companyId+')',companyId);
-    toast('Cliente criado: '+companyId,'ok');
+    await _auditoriaEmpresa('EMPRESA_CRIADA', emp);
+    toast('Empresa criada: '+companyId,'ok');
     fecharModal('mCliente'); renderClientes();
   }catch(e){ toast('Erro: '+(e.message||e),'err'); }
+}
+// item 3: editar dados cadastrais — Company ID nunca é campo editável.
+function editarEmpresa(companyId){
+  if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
+  const e=_empresasCache.find(x=>x.company_id===companyId);
+  if(!e){ toast('Empresa não encontrada','err'); return; }
+  document.getElementById('edEmp_companyId').value=e.company_id;
+  document.getElementById('edEmp_companyIdView').textContent=e.company_id;
+  document.getElementById('edEmp_razao').value=e.razao_social||'';
+  document.getElementById('edEmp_fantasia').value=e.nome_fantasia||'';
+  document.getElementById('edEmp_cnpj').value=e.cnpj||'';
+  document.getElementById('edEmp_resp').value=e.responsavel||'';
+  document.getElementById('edEmp_email').value=e.email||'';
+  document.getElementById('edEmp_tel').value=e.telefone||'';
+  abrirModal('mEditarEmpresa');
+}
+async function salvarEdicaoEmpresa(){
+  if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
+  const companyId=document.getElementById('edEmp_companyId').value;
+  const e=_empresasCache.find(x=>x.company_id===companyId);
+  if(!e){ toast('Empresa não encontrada','err'); return; }
+  const razao=document.getElementById('edEmp_razao').value.trim();
+  const cnpj=document.getElementById('edEmp_cnpj').value.trim();
+  const resp=document.getElementById('edEmp_resp').value.trim();
+  const email=document.getElementById('edEmp_email').value.trim();
+  if(!razao||!cnpj||!resp||!email){ toast('Preencha os obrigatórios (*)','err'); return; }
+
+  // item 6: duplicidade também na edição, ignorando a própria empresa.
+  const cnpjDigitos=cnpj.replace(/\D/g,'');
+  if(_empresasCache.some(x=>x.company_id!==companyId&&(x.cnpj||'').replace(/\D/g,'')===cnpjDigitos)){ toast('Já existe outra empresa com esse CNPJ','err'); return; }
+  if(_empresasCache.some(x=>x.company_id!==companyId&&(x.razao_social||'').trim().toLowerCase()===razao.toLowerCase())){ toast('Já existe outra empresa com essa Razão Social','err'); return; }
+
+  const patch={
+    razao_social:razao, nome_fantasia:document.getElementById('edEmp_fantasia').value.trim()||razao,
+    cnpj, responsavel:resp, email, telefone:document.getElementById('edEmp_tel').value.trim(),
+    updated_at:new Date().toISOString(),
+  };
+  try{
+    await DB.updateEmpresa(companyId, patch);
+    await _auditoriaEmpresa('EMPRESA_EDITADA', {...e, ...patch});
+    toast('Empresa atualizada','ok');
+    fecharModal('mEditarEmpresa'); renderClientes();
+  }catch(err){ toast('Erro: '+(err.message||err),'err'); }
+}
+// item 9: bloquear nega login (Master/Usuário) em todos os módulos.
+async function bloquearEmpresa(companyId){
+  if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
+  const e=_empresasCache.find(x=>x.company_id===companyId);
+  if(!e){ toast('Empresa não encontrada','err'); return; }
+  if(!confirm(`Bloquear a empresa "${e.razao_social}"?\n\nTodos os usuários dela ficarão sem acesso até a reativação.`))return;
+  const patch={status:'BLOQUEADA', updated_at:new Date().toISOString()};
+  await DB.updateEmpresa(companyId, patch);
+  await _auditoriaEmpresa('EMPRESA_BLOQUEADA', {...e, ...patch});
+  toast('Empresa bloqueada','ok');
+  renderClientes();
+}
+async function reativarEmpresa(companyId){
+  if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
+  const e=_empresasCache.find(x=>x.company_id===companyId);
+  if(!e){ toast('Empresa não encontrada','err'); return; }
+  const patch={status:'ATIVA', updated_at:new Date().toISOString()};
+  await DB.updateEmpresa(companyId, patch);
+  await _auditoriaEmpresa('EMPRESA_REATIVADA', {...e, ...patch});
+  toast('Empresa reativada','ok');
+  renderClientes();
+}
+// item 8: cancelar cancela automaticamente licenças e módulos — nunca
+// apaga histórico, auditoria, usuários ou a própria empresa.
+async function cancelarEmpresa(companyId){
+  if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
+  const e=_empresasCache.find(x=>x.company_id===companyId);
+  if(!e){ toast('Empresa não encontrada','err'); return; }
+  if(!confirm(`Cancelar definitivamente a empresa "${e.razao_social}"?\n\nA licença e todos os módulos serão cancelados. O histórico, a auditoria e os usuários são mantidos.`))return;
+  const patch={status:'CANCELADA', updated_at:new Date().toISOString()};
+  await DB.updateEmpresa(companyId, patch);
+  await DB.updateLicenca(companyId, {status:'CANCELADA'});
+  for(const m of MODULOS) await DB.setModulo(companyId, m.id, 'BLOQUEADO');
+  await _auditoriaEmpresa('EMPRESA_CANCELADA', {...e, ...patch});
+  toast('Empresa cancelada','ok');
+  renderClientes();
+}
+// item 4: Dashboard da Empresa — só leitura.
+async function abrirDashboardEmpresa(companyId){
+  const e=_empresasCache.find(x=>x.company_id===companyId)||(await DB.empresas()).find(x=>x.company_id===companyId);
+  if(!e){ toast('Empresa não encontrada','err'); return; }
+  const licencas=await DB.licencas();
+  const lic=licencas.find(l=>l.company_id===companyId)||{};
+  const usuarios=(await DB.usuarios()).filter(u=>u.company_id===companyId);
+  const modulos=(await DB.modulos()).filter(m=>m.company_id===companyId);
+  const logs=(await DB.logs()).filter(l=>l.company_id===companyId);
+  const ultimoAcesso=logs.filter(l=>l.tipo==='LOGIN').sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
+
+  document.getElementById('dashEmp_titulo').textContent=e.razao_social;
+  document.getElementById('dashEmp_subtitulo').innerHTML=statusEmpresaBadge(e.status);
+  const fmtData=(iso)=> iso ? new Date(iso).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+  const linhas=[
+    ['Empresa', e.nome_fantasia||e.razao_social],
+    ['Company ID', e.company_id],
+    ['Licença', lic.status||'ATIVA'],
+    ['Plano', lic.plano||'FREE'],
+    ['Qtd. Módulos', modulos.filter(m=>m.status==='LIBERADO').length+' / '+MODULOS.length],
+    ['Usuários Ativos', usuarios.filter(u=>u.ativo!==false).length],
+    ['Usuários Inativos', usuarios.filter(u=>u.ativo===false).length],
+    ['Data de Criação', fmtData(e.created_at)],
+    ['Último Acesso', ultimoAcesso?fmtData(ultimoAcesso.created_at):'Nunca acessou'],
+    ['Última Sincronização', fmtData(e.updated_at||e.created_at)],
+  ];
+  document.getElementById('dashEmp_grid').innerHTML=linhas.map(([l,v])=>`<div class="kc"><div class="kv" style="font-size:15px;">${v}</div><div class="kl">${l}</div></div>`).join('');
+  abrirModal('mDashboardEmpresa');
 }
 
 // ═══════════════════════════════════════════════════════════════
