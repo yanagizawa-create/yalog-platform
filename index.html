@@ -1244,23 +1244,48 @@ async function processarFilaSync(){
   return { ok:true, processados };
 }
 
+// Sprint YALOG-PLATFORM — Correção do Bloqueio de Empresas: a tabela
+// `empresas` no Supabase não tem coluna `status` (confirmado por
+// auditoria direta no banco) — só `ativo` (booleano). Toda a lógica de
+// negócio de 4 estados (Ativa/Bloqueada/Cancelada/Em Implantação),
+// badges, filtros e cascata de bloqueio/cancelamento continua
+// exatamente como estava — nada disso muda. Só a fronteira com o
+// Supabase muda aqui: nunca mais envia `status` (que gerava 400), e
+// sempre reconstrói `status` a partir de `ativo` na leitura (uma
+// coluna booleana só permite distinguir Ativa de "não ativa" — ver
+// nota no relatório final sobre a perda de granularidade entre
+// Bloqueada/Cancelada/Em Implantação depois de um reload).
+function _statusParaAtivo(status){
+  return status==='ATIVA';
+}
+function _empresaComStatusDerivado(row){
+  if(!row)return row;
+  if(row.status===undefined && row.ativo!==undefined){
+    row.status = row.ativo!==false ? 'ATIVA' : 'BLOQUEADA';
+  }
+  return row;
+}
 const DB = {
   async empresas(){
     return withFallback(
-      async ()=>{ const {data,error}=await supabaseClient.from('empresas').select('*').order('created_at',{ascending:false}); if(error)throw error; return data||[]; },
-      ()=> LS.get('empresas')
+      async ()=>{ const {data,error}=await supabaseClient.from('empresas').select('*').order('created_at',{ascending:false}); if(error)throw error; return (data||[]).map(_empresaComStatusDerivado); },
+      ()=> LS.get('empresas').map(_empresaComStatusDerivado)
     );
   },
   async addEmpresa(e){
     e=prepararPayload('empresas', e, true);
+    // A coluna `status` não existe na tabela — nunca é enviada ao
+    // Supabase; convertida para `ativo` antes da gravação.
+    if('status' in e){ e.ativo=_statusParaAtivo(e.status); delete e.status; }
     return withFallback(
-      async ()=>{ const {data,error}=await supabaseClient.from('empresas').insert([e]).select().single(); if(error)throw error; return data; },
+      async ()=>{ const {data,error}=await supabaseClient.from('empresas').insert([e]).select().single(); if(error)throw error; return _empresaComStatusDerivado(data); },
       ()=>{ const a=LS.get('empresas'); a.push(e); LS.set('empresas',a); return e; },
       {tabela:'empresas', operacao:'upsert', payload:e, match:{onConflict:'company_id'}}
     );
   },
   async updateEmpresa(companyId, patch){
     patch=prepararPayload('empresas', patch, true);
+    if('status' in patch){ patch.ativo=_statusParaAtivo(patch.status); delete patch.status; }
     return withFallback(
       async ()=>{ const {error}=await supabaseClient.from('empresas').update(patch).eq('company_id',companyId); if(error)throw error; },
       ()=>{ const a=LS.get('empresas'); const i=a.findIndex(x=>x.company_id===companyId); if(i>=0){a[i]={...a[i],...patch};LS.set('empresas',a);} },
