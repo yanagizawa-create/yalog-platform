@@ -1247,7 +1247,7 @@ async function processarFilaSync(){
 const DB = {
   async empresas(){
     return withFallback(
-      async ()=>{ const {data,error}=await supabaseClient.from('empresas').select('*').order('created_at',{ascending:false}); if(error)throw error; return data||[]; },
+      async ()=>{ const {data,error}=await supabaseClient.from('empresas').select('*').order('criado_em',{ascending:false}); if(error)throw error; return data||[]; },
       ()=> LS.get('empresas')
     );
   },
@@ -1256,20 +1256,20 @@ const DB = {
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('empresas').insert([e]).select().single(); if(error)throw error; return data; },
       ()=>{ const a=LS.get('empresas'); a.push(e); LS.set('empresas',a); return e; },
-      {tabela:'empresas', operacao:'upsert', payload:e, match:{onConflict:'company_id'}}
+      {tabela:'empresas', operacao:'upsert', payload:e, match:{onConflict:'id_da_empresa'}}
     );
   },
   async updateEmpresa(companyId, patch){
     patch=prepararPayload('empresas', patch, true);
     return withFallback(
-      async ()=>{ const {error}=await supabaseClient.from('empresas').update(patch).eq('company_id',companyId); if(error)throw error; },
-      ()=>{ const a=LS.get('empresas'); const i=a.findIndex(x=>x.company_id===companyId); if(i>=0){a[i]={...a[i],...patch};LS.set('empresas',a);} },
-      {tabela:'empresas', operacao:'update', payload:patch, match:{company_id:companyId}}
+      async ()=>{ const {error}=await supabaseClient.from('empresas').update(patch).eq('id_da_empresa',companyId); if(error)throw error; },
+      ()=>{ const a=LS.get('empresas'); const i=a.findIndex(x=>x.id_da_empresa===companyId); if(i>=0){a[i]={...a[i],...patch};LS.set('empresas',a);} },
+      {tabela:'empresas', operacao:'update', payload:patch, match:{id_da_empresa:companyId}}
     );
   },
   async usuarios(){
     return withFallback(
-      async ()=>{ const {data,error}=await supabaseClient.from('usuarios').select('*').order('created_at',{ascending:false}); if(error)throw error; return data||[]; },
+      async ()=>{ const {data,error}=await supabaseClient.from('usuarios').select('*').order('criado_em',{ascending:false}); if(error)throw error; return data||[]; },
       ()=> LS.get('usuarios')
     );
   },
@@ -1278,15 +1278,15 @@ const DB = {
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('usuarios').insert([u]).select().single(); if(error)throw error; return data; },
       ()=>{ const a=LS.get('usuarios'); a.push(u); LS.set('usuarios',a); return u; },
-      {tabela:'usuarios', operacao:'upsert', payload:u, match:{onConflict:'company_id,login'}}
+      {tabela:'usuarios', operacao:'upsert', payload:u, match:{onConflict:'id_da_empresa,Conecte-se'}}
     );
   },
   async updateUsuario(companyId, login, patch){
     patch=prepararPayload('usuarios', patch, true);
     return withFallback(
-      async ()=>{ const {error}=await supabaseClient.from('usuarios').update(patch).eq('company_id',companyId).eq('login',login); if(error)throw error; },
-      ()=>{ const a=LS.get('usuarios'); const i=a.findIndex(x=>x.company_id===companyId&&x.login===login); if(i>=0){a[i]={...a[i],...patch};LS.set('usuarios',a);} },
-      {tabela:'usuarios', operacao:'update', payload:patch, match:{company_id:companyId, login:login}}
+      async ()=>{ const {error}=await supabaseClient.from('usuarios').update(patch).eq('id_da_empresa',companyId).eq('Conecte-se',login); if(error)throw error; },
+      ()=>{ const a=LS.get('usuarios'); const i=a.findIndex(x=>x.id_da_empresa===companyId&&x['Conecte-se']===login); if(i>=0){a[i]={...a[i],...patch};LS.set('usuarios',a);} },
+      {tabela:'usuarios', operacao:'update', payload:patch, match:{id_da_empresa:companyId, 'Conecte-se':login}}
     );
   },
   async licencas(){
@@ -1300,15 +1300,15 @@ const DB = {
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('licencas').insert([l]).select().single(); if(error)throw error; return data; },
       ()=>{ const a=LS.get('licencas'); a.push(l); LS.set('licencas',a); return l; },
-      {tabela:'licencas', operacao:'upsert', payload:l, match:{onConflict:'company_id'}}
+      {tabela:'licencas', operacao:'upsert', payload:l, match:{onConflict:'id_da_empresa'}}
     );
   },
   async updateLicenca(companyId, patch){
-    const row=prepararPayload('licencas', {...patch, company_id:companyId});
+    const row=prepararPayload('licencas', {...patch, id_da_empresa:companyId});
     return withFallback(
-      async ()=>{ const {error}=await supabaseClient.from('licencas').upsert(row,{onConflict:'company_id'}); if(error)throw error; },
-      ()=>{ const a=LS.get('licencas'); const i=a.findIndex(x=>x.company_id===companyId); if(i>=0){a[i]={...a[i],...row};} else {a.push(row);} LS.set('licencas',a); },
-      {tabela:'licencas', operacao:'upsert', payload:row, match:{onConflict:'company_id'}}
+      async ()=>{ const {error}=await supabaseClient.from('licencas').upsert(row,{onConflict:'id_da_empresa'}); if(error)throw error; },
+      ()=>{ const a=LS.get('licencas'); const i=a.findIndex(x=>x.id_da_empresa===companyId); if(i>=0){a[i]={...a[i],...row};} else {a.push(row);} LS.set('licencas',a); },
+      {tabela:'licencas', operacao:'upsert', payload:row, match:{onConflict:'id_da_empresa'}}
     );
   },
   async modulos(){
@@ -1318,11 +1318,11 @@ const DB = {
     );
   },
   async setModulo(companyId, modulo, status){
-    const row=prepararPayload('modulos', {company_id:companyId,modulo,status,liberado_em:status==='LIBERADO'?new Date().toISOString():null});
+    const row=prepararPayload('modulos', {id_da_empresa:companyId,modulo,status,liberado_em:status==='LIBERADO'?new Date().toISOString():null});
     return withFallback(
-      async ()=>{ const {error}=await supabaseClient.from('modulos').upsert(row,{onConflict:'company_id,modulo'}); if(error)throw error; },
-      ()=>{ const a=LS.get('modulos'); const i=a.findIndex(x=>x.company_id===companyId&&x.modulo===modulo); if(i>=0)a[i]=row; else a.push(row); LS.set('modulos',a); },
-      {tabela:'modulos', operacao:'upsert', payload:row, match:{onConflict:'company_id,modulo'}}
+      async ()=>{ const {error}=await supabaseClient.from('modulos').upsert(row,{onConflict:'id_da_empresa,modulo'}); if(error)throw error; },
+      ()=>{ const a=LS.get('modulos'); const i=a.findIndex(x=>x.id_da_empresa===companyId&&x.modulo===modulo); if(i>=0)a[i]=row; else a.push(row); LS.set('modulos',a); },
+      {tabela:'modulos', operacao:'upsert', payload:row, match:{onConflict:'id_da_empresa,modulo'}}
     );
   },
   async log(tipo,detalhe,companyId){
@@ -1354,18 +1354,18 @@ async function seedSuperAdmin(){
   try{ usuarios=await DB.usuarios(); }
   catch(e){ console.error('[YALOG] Falha ao ler usuarios no seed:',e); usuarios=[]; }
 
-  // Há sempre no máximo UM usuário com role SUPER_ADMIN (o "seed").
-  // Localizamos por role, não por login — assim, se o login mudar no
+  // Há sempre no máximo UM usuário com papel SUPER_ADMIN (o "seed").
+  // Localizamos por papel, não por login — assim, se o login mudar no
   // platform-config.js, encontramos o mesmo registro para atualizar
   // em vez de criar um segundo Super Admin.
-  const existente = usuarios.find(u => u.role === 'SUPER_ADMIN');
+  const existente = usuarios.find(u => u.papel === 'SUPER_ADMIN');
 
   if(!existente){
     const senhaHash = await hashSenha(SA.senha);
     await DB.addUsuario({
-      company_id:'YALOG-CORE', nome: SA.nome || 'Super Administrador', login: loginSA,
-      senha_hash: senhaHash, role:'SUPER_ADMIN', ativo:true,
-      created_at:new Date().toISOString(),
+      id_da_empresa:'YALOG-CORE', nome: SA.nome || 'Super Administrador', 'Conecte-se': loginSA,
+      senha_hash: senhaHash, papel:'SUPER_ADMIN', ativo:true,
+      criado_em:new Date().toISOString(),
     });
     console.log('[YALOG] Super Admin criado');
     return;
@@ -1374,14 +1374,14 @@ async function seedSuperAdmin(){
   // Já existe — verifica se login e/ou senha do config divergem do salvo,
   // e atualiza automaticamente (nunca depende de limpar o localStorage).
   const senhaHashAtual = await hashSenha(SA.senha);
-  const loginMudou = String(existente.login).trim().toLowerCase() !== loginSA;
+  const loginMudou = String(existente['Conecte-se']).trim().toLowerCase() !== loginSA;
   const senhaMudou = existente.senha_hash !== senhaHashAtual;
 
   if(loginMudou || senhaMudou){
     const patch = {};
-    if(loginMudou) patch.login = loginSA;
+    if(loginMudou) patch['Conecte-se'] = loginSA;
     if(senhaMudou) patch.senha_hash = senhaHashAtual;
-    await DB.updateUsuario(existente.company_id, existente.login, patch);
+    await DB.updateUsuario(existente.id_da_empresa, existente['Conecte-se'], patch);
     console.log('[YALOG] Super Admin já existente');
     console.log('[YALOG] Super Admin atualizado — login:', loginMudou, '| senha:', senhaMudou);
     await DB.log('ALTERACAO', 'Super Admin sincronizado com platform-config.js (login:'+loginMudou+', senha:'+senhaMudou+')', 'YALOG-CORE');
@@ -1469,13 +1469,13 @@ async function fazerLogin(){
     // bloqueado, exceção em outro ponto do boot), o login se auto-repara
     // aqui em vez de simplesmente falhar.
     let usuarios=await DB.usuarios();
-    if(!usuarios.length || !usuarios.some(u=>u.role==='SUPER_ADMIN')){
+    if(!usuarios.length || !usuarios.some(u=>u.papel==='SUPER_ADMIN')){
       console.warn('[YALOG] Super Admin ausente no login — executando seed de emergência');
       await seedSuperAdmin();
       usuarios=await DB.usuarios();
     }
     // Busca robusta (case-insensitive, sem espaços)
-    const usuario=usuarios.find(u=>String(u.login).trim().toLowerCase()===login);
+    const usuario=usuarios.find(u=>String(u['Conecte-se']).trim().toLowerCase()===login);
     if(!usuario){
       console.warn('[YALOG] login não encontrado:', login);
       toast('Usuário não encontrado','err');
@@ -1483,9 +1483,9 @@ async function fazerLogin(){
       return;
     }
     console.log('[YALOG] Login encontrado');
-    console.log('[YALOG] login encontrado:', usuario.login);
-    console.log('[YALOG] role:', usuario.role);
-    console.log('[YALOG] company_id:', usuario.company_id);
+    console.log('[YALOG] login encontrado:', usuario['Conecte-se']);
+    console.log('[YALOG] role:', usuario.papel);
+    console.log('[YALOG] company_id:', usuario.id_da_empresa);
 
     const senhaHash=await hashSenha(senha);
     console.log('[YALOG] hash informado:', senhaHash);
@@ -1501,18 +1501,18 @@ async function fazerLogin(){
       // hash e deixa entrar, em vez de travar o acesso do dono do sistema.
       const SA=YALOG_CONFIG.SUPER_ADMIN||{};
       const ehSuperAdminDoConfig =
-        usuario.role==='SUPER_ADMIN' &&
+        usuario.papel==='SUPER_ADMIN' &&
         String(SA.login||'').trim().toLowerCase()===login &&
         String(SA.senha||'')===senha;
 
       if(ehSuperAdminDoConfig){
         console.warn('[YALOG] Hash obsoleto do Super Admin — ressincronizando');
-        await DB.updateUsuario(usuario.company_id, usuario.login, {senha_hash:senhaHash});
+        await DB.updateUsuario(usuario.id_da_empresa, usuario['Conecte-se'], {senha_hash:senhaHash});
         usuario.senha_hash=senhaHash;
         await DB.log('ALTERACAO','Hash do Super Admin ressincronizado no login','YALOG-CORE');
       } else {
         toast('Senha incorreta','err');
-        await DB.log('FALHA','Senha incorreta: '+login,usuario.company_id);
+        await DB.log('FALHA','Senha incorreta: '+login,usuario.id_da_empresa);
         return;
       }
     }
@@ -1526,24 +1526,24 @@ async function fazerLogin(){
     // nega login a Master/Usuário — SUPER_ADMIN/GESTOR (equipe YALog)
     // nunca são bloqueados por isso, pois precisam continuar acessando
     // pra reativar a empresa.
-    if(usuario.role==='MASTER'||usuario.role==='USUARIO'){
-      const empresaDoUsuarioCheck=empresasAtuais.find(e=>e.company_id===usuario.company_id);
+    if(usuario.papel==='MASTER'||usuario.papel==='USUARIO'){
+      const empresaDoUsuarioCheck=empresasAtuais.find(e=>e.id_da_empresa===usuario.id_da_empresa);
       if(empresaDoUsuarioCheck && empresaDoUsuarioCheck.status==='BLOQUEADA'){
         SESSION=null;
         toast('Empresa bloqueada. Entre em contato com a YALog.','err');
-        await DB.log('FALHA','Login negado — empresa bloqueada: '+login, usuario.company_id);
+        await DB.log('FALHA','Login negado — empresa bloqueada: '+login, usuario.id_da_empresa);
         return;
       }
       if(empresaDoUsuarioCheck && empresaDoUsuarioCheck.status==='CANCELADA'){
         SESSION=null;
         toast('Empresa cancelada. Entre em contato com a YALog.','err');
-        await DB.log('FALHA','Login negado — empresa cancelada: '+login, usuario.company_id);
+        await DB.log('FALHA','Login negado — empresa cancelada: '+login, usuario.id_da_empresa);
         return;
       }
     }
-    const empresaDoUsuario=empresasAtuais.find(e=>e.company_id===usuario.company_id);
-    _gravarSessaoCompartilhada(usuario, empresaDoUsuario?empresaDoUsuario.razao_social:usuario.company_id);
-    await DB.log('LOGIN','Login: '+login,usuario.company_id);
+    const empresaDoUsuario=empresasAtuais.find(e=>e.id_da_empresa===usuario.id_da_empresa);
+    _gravarSessaoCompartilhada(usuario, empresaDoUsuario?empresaDoUsuario.razao_social:usuario.id_da_empresa);
+    await DB.log('LOGIN','Login: '+login,usuario.id_da_empresa);
     console.log('[YALOG] Login efetuado');
     toast('Bem-vindo, '+usuario.nome+'!','ok');
     entrarApp();
@@ -1566,10 +1566,10 @@ function _gravarSessaoCompartilhada(usuario, empresaRazaoSocial){
     localStorage.setItem(
       "yalog_admin_session",
       JSON.stringify({
-        login: usuario.login,
+        login: usuario['Conecte-se'],
         nome: usuario.nome,
-        role: usuario.role,
-        company_id: usuario.company_id,
+        role: usuario.papel,
+        company_id: usuario.id_da_empresa,
         empresa: empresaRazaoSocial,
         timestamp: Date.now()
       })
@@ -1590,18 +1590,18 @@ async function carregarSessao(){
     // (com senha_hash etc., usado pelo resto da Platform) é sempre
     // reidratado a partir do registro real em DB.usuarios().
     const usuarios=await DB.usuarios();
-    const usuario=usuarios.find(u=>u.company_id===compartilhada.company_id && u.login===compartilhada.login);
+    const usuario=usuarios.find(u=>u.id_da_empresa===compartilhada.company_id && u['Conecte-se']===compartilhada.login);
     if(!usuario || usuario.ativo===false) return false;
 
     SESSION={ user:usuario };
     const empresas=await DB.empresas();
-    const empresaAtual=empresas.find(e=>e.company_id===usuario.company_id);
-    _gravarSessaoCompartilhada(usuario, empresaAtual?empresaAtual.razao_social:usuario.company_id); // atualiza timestamp
+    const empresaAtual=empresas.find(e=>e.id_da_empresa===usuario.id_da_empresa);
+    _gravarSessaoCompartilhada(usuario, empresaAtual?empresaAtual.razao_social:usuario.id_da_empresa); // atualiza timestamp
     return true;
   }catch(e){ console.warn('[YALOG] Falha ao restaurar sessão compartilhada:', e); return false; }
 }
 async function logout(){
-  if(SESSION) await DB.log('LOGOUT','Logout: '+SESSION.user.login,SESSION.user.company_id);
+  if(SESSION) await DB.log('LOGOUT','Logout: '+SESSION.user['Conecte-se'],SESSION.user.id_da_empresa);
   SESSION=null;
   localStorage.removeItem("yalog_admin_session");
   document.getElementById('app').style.display='none';
@@ -1616,9 +1616,9 @@ async function recuperarSenha(){
   if(OFF()){
     const nova=prompt('MODO OFFLINE — nova senha (mín. 6):');
     if(!nova||nova.length<6){ toast('Senha inválida','err'); return; }
-    const usuarios=await DB.usuarios(); const u=usuarios.find(x=>x.login===login);
+    const usuarios=await DB.usuarios(); const u=usuarios.find(x=>x['Conecte-se']===login);
     if(!u){ toast('Usuário não encontrado','err'); return; }
-    await DB.updateUsuario(u.company_id,login,{senha_hash:await hashSenha(nova)});
+    await DB.updateUsuario(u.id_da_empresa,login,{senha_hash:await hashSenha(nova)});
     toast('Senha redefinida (offline)','ok'); return;
   }
   toast('Recuperação por email requer Supabase Auth configurado','info');
@@ -1629,7 +1629,7 @@ async function recuperarSenha(){
 // ═══════════════════════════════════════════════════════════════
 function can(acao){
   if(!SESSION) return false;
-  const r=SESSION.user.role;
+  const r=SESSION.user.papel;
   const P={
     cadastrarCliente:['SUPER_ADMIN','GESTOR'],
     gerenciarEmpresa:['SUPER_ADMIN','GESTOR'],
@@ -1648,8 +1648,8 @@ function can(acao){
 // Empresa que o usuário pode ver (Master = só a sua)
 function escopoEmpresa(){
   if(!SESSION) return null;
-  if(['SUPER_ADMIN','GESTOR'].includes(SESSION.user.role)) return null; // todas
-  return SESSION.user.company_id; // Master/Usuário: só a própria
+  if(['SUPER_ADMIN','GESTOR'].includes(SESSION.user.papel)) return null; // todas
+  return SESSION.user.id_da_empresa; // Master/Usuário: só a própria
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1662,13 +1662,13 @@ function entrarApp(){
   const u=SESSION.user;
   document.getElementById('sbAvatar').textContent=(u.nome||'A')[0].toUpperCase();
   document.getElementById('sbNome').textContent=u.nome;
-  document.getElementById('sbRole').textContent=ROLES[u.role]||u.role;
+  document.getElementById('sbRole').textContent=ROLES[u.papel]||u.papel;
   document.getElementById('topDate').textContent=new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
 
   // Menu por perfil
   const nav=document.getElementById('navMenu');
   nav.innerHTML='<div class="nav-grp">Menu</div>'+
-    MENU.filter(m=>m.roles.includes(u.role)).map(m=>
+    MENU.filter(m=>m.roles.includes(u.papel)).map(m=>
       `<div class="ni" data-screen="${m.id}" onclick="go('${m.id}')"><span class="ni-ic">${m.icon}</span> ${m.label}</div>`
     ).join('');
 
@@ -1695,11 +1695,11 @@ async function renderDashboard(){
   const empresas=await DB.empresas();
   const usuarios=await DB.usuarios();
   const licencas=await DB.licencas();
-  const licMap={}; licencas.forEach(l=>licMap[l.company_id]=l);
+  const licMap={}; licencas.forEach(l=>licMap[l.id_da_empresa]=l);
   const escopo=escopoEmpresa();
-  const empV=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
-  const usrV=escopo?usuarios.filter(u=>u.company_id===escopo):usuarios;
-  const ativas=empV.filter(e=>((licMap[e.company_id]||{}).status||'ATIVA')==='ATIVA').length;
+  const empV=escopo?empresas.filter(e=>e.id_da_empresa===escopo):empresas;
+  const usrV=escopo?usuarios.filter(u=>u.id_da_empresa===escopo):usuarios;
+  const ativas=empV.filter(e=>((licMap[e.id_da_empresa]||{}).status||'ATIVA')==='ATIVA').length;
   // Sprint YALOG-PLATFORM-007, item 10: "online"/"offline" definido
   // pelo status da própria empresa (ATIVA = online; qualquer outro
   // status = offline) — não há telemetria de conexão em tempo real
@@ -1707,8 +1707,8 @@ async function renderDashboard(){
   const empOnline=empV.filter(e=>(e.status||'ATIVA')==='ATIVA').length;
   const empOffline=empV.length-empOnline;
   const empBloqueadas=empV.filter(e=>e.status==='BLOQUEADA').length;
-  const mastersCount=usrV.filter(u=>u.role==='MASTER').length;
-  const modAtivosCount=(await DB.modulos()).filter(m=>(!escopo||m.company_id===escopo)&&m.status==='LIBERADO').length;
+  const mastersCount=usrV.filter(u=>u.papel==='MASTER').length;
+  const modAtivosCount=(await DB.modulos()).filter(m=>(!escopo||m.id_da_empresa===escopo)&&m.status==='LIBERADO').length;
 
   document.getElementById('dashKpis').innerHTML=`
     <div class="kc"><span class="ki">🏢</span><div class="kv">${empV.length}</div><div class="kl">Empresas</div></div>
@@ -1736,8 +1736,8 @@ async function renderDashboard(){
 // Auditoria dedicada — sempre Company ID/Empresa/Usuário responsável
 // (a Data/Hora já vem do created_at da própria linha de log).
 async function _auditoriaEmpresa(acao, emp){
-  const responsavel=SESSION?(SESSION.user.nome+' ('+SESSION.user.login+')'):'—';
-  await DB.log(acao, 'Empresa: '+emp.razao_social+' ('+emp.company_id+') — Responsável: '+responsavel, emp.company_id);
+  const responsavel=SESSION?(SESSION.user.nome+' ('+SESSION.user['Conecte-se']+')'):'—';
+  await DB.log(acao, 'Empresa: '+emp.razao_social+' ('+emp.id_da_empresa+') — Responsável: '+responsavel, emp.id_da_empresa);
 }
 function statusEmpresaBadge(status){
   const s=status||'ATIVA';
@@ -1756,16 +1756,16 @@ async function renderClientes(){
   _licencasCache=await DB.licencas();
   _usuariosCache=await DB.usuarios();
   const escopo=escopoEmpresa();
-  if(escopo){ _empresasCache=_empresasCache.filter(e=>e.company_id===escopo); }
+  if(escopo){ _empresasCache=_empresasCache.filter(e=>e.id_da_empresa===escopo); }
 
   // item 5: resumo operacional
-  const licMapResumo={}; _licencasCache.forEach(l=>licMapResumo[l.company_id]=l);
-  const escopoUsr=escopo?_usuariosCache.filter(u=>u.company_id===escopo):_usuariosCache;
-  const licUtilizadas=_empresasCache.filter(e=>(licMapResumo[e.company_id]||{}).status==='ATIVA').length;
+  const licMapResumo={}; _licencasCache.forEach(l=>licMapResumo[l.id_da_empresa]=l);
+  const escopoUsr=escopo?_usuariosCache.filter(u=>u.id_da_empresa===escopo):_usuariosCache;
+  const licUtilizadas=_empresasCache.filter(e=>(licMapResumo[e.id_da_empresa]||{}).status==='ATIVA').length;
   const licDisponiveis=_empresasCache.length-licUtilizadas;
   let modAtivos=0, modBloqueados=0;
-  (await DB.modulos()).filter(m=>!escopo||m.company_id===escopo).forEach(m=>m.status==='LIBERADO'?modAtivos++:modBloqueados++);
-  const mastersCount=escopoUsr.filter(u=>u.role==='MASTER').length;
+  (await DB.modulos()).filter(m=>!escopo||m.id_da_empresa===escopo).forEach(m=>m.status==='LIBERADO'?modAtivos++:modBloqueados++);
+  const mastersCount=escopoUsr.filter(u=>u.papel==='MASTER').length;
   document.getElementById('empresasResumoKpis').innerHTML=`
     <div class="kc"><span class="ki">📜</span><div class="kv" style="color:var(--g2);">${licUtilizadas}</div><div class="kl">Licenças Utilizadas</div></div>
     <div class="kc"><span class="ki">📜</span><div class="kv">${licDisponiveis}</div><div class="kl">Licenças Disponíveis</div></div>
@@ -1789,36 +1789,36 @@ function filtrarEmpresas(){
   let lista=_empresasCache;
   if(fRazao)lista=lista.filter(e=>(e.razao_social||'').toLowerCase().includes(fRazao));
   if(fFantasia)lista=lista.filter(e=>(e.nome_fantasia||'').toLowerCase().includes(fFantasia));
-  if(fCompanyId)lista=lista.filter(e=>(e.company_id||'').toLowerCase().includes(fCompanyId));
+  if(fCompanyId)lista=lista.filter(e=>(e.id_da_empresa||'').toLowerCase().includes(fCompanyId));
   if(fCnpj)lista=lista.filter(e=>(e.cnpj||'').replace(/\D/g,'').includes(fCnpj));
   if(fStatus)lista=lista.filter(e=>(e.status||'ATIVA')===fStatus);
 
-  const licMap={}; _licencasCache.forEach(l=>licMap[l.company_id]=l);
+  const licMap={}; _licencasCache.forEach(l=>licMap[l.id_da_empresa]=l);
   const tb=document.getElementById('tbClientes');
   if(!lista.length){ tb.innerHTML='<tr><td colspan="8"><div class="qs-empty">Nenhuma empresa encontrada.</div></td></tr>'; return; }
   const podeGerir=can('gerenciarEmpresa');
   tb.innerHTML=lista.map(e=>{
-    const lic=licMap[e.company_id]||{};
+    const lic=licMap[e.id_da_empresa]||{};
     const status=e.status||'ATIVA';
     let acoesStatus='';
     if(podeGerir){
       if(status==='BLOQUEADA'){
-        acoesStatus=`<button class="btn btn-o btn-xs" onclick="reativarEmpresa('${e.company_id}')">Reativar</button>`;
+        acoesStatus=`<button class="btn btn-o btn-xs" onclick="reativarEmpresa('${e.id_da_empresa}')">Reativar</button>`;
       }else if(status!=='CANCELADA'){
-        acoesStatus=`<button class="btn btn-r btn-xs" onclick="bloquearEmpresa('${e.company_id}')">Bloquear</button> <button class="btn btn-r btn-xs" onclick="cancelarEmpresa('${e.company_id}')">Cancelar</button>`;
+        acoesStatus=`<button class="btn btn-r btn-xs" onclick="bloquearEmpresa('${e.id_da_empresa}')">Bloquear</button> <button class="btn btn-r btn-xs" onclick="cancelarEmpresa('${e.id_da_empresa}')">Cancelar</button>`;
       }
     }
     return `<tr>
-    <td style="font-family:var(--mono);color:var(--orange2);">${e.company_id}</td>
+    <td style="font-family:var(--mono);color:var(--orange2);">${e.id_da_empresa}</td>
     <td>${e.razao_social}</td><td style="font-family:var(--mono);">${e.cnpj||'—'}</td>
     <td>${e.responsavel||'—'}</td>
     <td><span class="master-badge">${lic.plano||'FREE'}</span></td>
     <td>${licBadge(lic.status)}</td>
     <td>${statusEmpresaBadge(status)}</td>
     <td style="white-space:nowrap;">
-      ${podeGerir?`<button class="btn btn-o btn-xs" onclick="editarEmpresa('${e.company_id}')">Editar</button> `:''}
-      <button class="btn btn-b btn-xs" onclick="abrirDashboardEmpresa('${e.company_id}')">Dashboard</button>
-      ${can('editarLicenca')?` <button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Licença</button>`:''}
+      ${podeGerir?`<button class="btn btn-o btn-xs" onclick="editarEmpresa('${e.id_da_empresa}')">Editar</button> `:''}
+      <button class="btn btn-b btn-xs" onclick="abrirDashboardEmpresa('${e.id_da_empresa}')">Dashboard</button>
+      ${can('editarLicenca')?` <button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.id_da_empresa}')">Licença</button>`:''}
       ${acoesStatus?' '+acoesStatus:''}
     </td>
   </tr>`;
@@ -1855,21 +1855,21 @@ async function salvarCliente(){
   // Company ID é gerado aleatoriamente — colisão é improvável, mas
   // nunca permitida (item 6/12): tenta de novo em vez de arriscar.
   let tentativas=0;
-  while(empresasAtuais.some(e=>e.company_id===companyId)&&tentativas<10){ companyId=gerarCompanyId(); tentativas++; }
+  while(empresasAtuais.some(e=>e.id_da_empresa===companyId)&&tentativas<10){ companyId=gerarCompanyId(); tentativas++; }
 
   const emp={
-    company_id:companyId, razao_social:razao,
+    id_da_empresa:companyId, razao_social:razao,
     nome_fantasia:document.getElementById('cli_fantasia').value.trim()||razao,
     cnpj, responsavel:resp, email,
     telefone:document.getElementById('cli_tel').value.trim(),
-    status, created_at:new Date().toISOString(), updated_at:new Date().toISOString(),
+    status, criado_em:new Date().toISOString(), atualizado_em:new Date().toISOString(),
   };
   try{
     await DB.addEmpresa(emp);
     // Licença própria (tabela licencas), plano FREE por padrão
     await DB.addLicenca({
-      company_id:companyId, plano:'FREE', status:'ATIVA', validade:null,
-      qtd_usuarios:5, qtd_modulos:1, created_at:new Date().toISOString(),
+      id_da_empresa:companyId, plano:'FREE', status:'ATIVA', validade:null,
+      qtd_usuarios:5, qtd_modulos:1, criado_em:new Date().toISOString(),
     });
     // libera WMS por padrão, demais bloqueados
     for(const m of MODULOS) await DB.setModulo(companyId,m.id,m.id==='wms'?'LIBERADO':'BLOQUEADO');
@@ -1881,10 +1881,10 @@ async function salvarCliente(){
 // item 3: editar dados cadastrais — Company ID nunca é campo editável.
 function editarEmpresa(companyId){
   if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
-  const e=_empresasCache.find(x=>x.company_id===companyId);
+  const e=_empresasCache.find(x=>x.id_da_empresa===companyId);
   if(!e){ toast('Empresa não encontrada','err'); return; }
-  document.getElementById('edEmp_companyId').value=e.company_id;
-  document.getElementById('edEmp_companyIdView').textContent=e.company_id;
+  document.getElementById('edEmp_companyId').value=e.id_da_empresa;
+  document.getElementById('edEmp_companyIdView').textContent=e.id_da_empresa;
   document.getElementById('edEmp_razao').value=e.razao_social||'';
   document.getElementById('edEmp_fantasia').value=e.nome_fantasia||'';
   document.getElementById('edEmp_cnpj').value=e.cnpj||'';
@@ -1896,7 +1896,7 @@ function editarEmpresa(companyId){
 async function salvarEdicaoEmpresa(){
   if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
   const companyId=document.getElementById('edEmp_companyId').value;
-  const e=_empresasCache.find(x=>x.company_id===companyId);
+  const e=_empresasCache.find(x=>x.id_da_empresa===companyId);
   if(!e){ toast('Empresa não encontrada','err'); return; }
   const razao=document.getElementById('edEmp_razao').value.trim();
   const cnpj=document.getElementById('edEmp_cnpj').value.trim();
@@ -1906,13 +1906,13 @@ async function salvarEdicaoEmpresa(){
 
   // item 6: duplicidade também na edição, ignorando a própria empresa.
   const cnpjDigitos=cnpj.replace(/\D/g,'');
-  if(_empresasCache.some(x=>x.company_id!==companyId&&(x.cnpj||'').replace(/\D/g,'')===cnpjDigitos)){ toast('Já existe outra empresa com esse CNPJ','err'); return; }
-  if(_empresasCache.some(x=>x.company_id!==companyId&&(x.razao_social||'').trim().toLowerCase()===razao.toLowerCase())){ toast('Já existe outra empresa com essa Razão Social','err'); return; }
+  if(_empresasCache.some(x=>x.id_da_empresa!==companyId&&(x.cnpj||'').replace(/\D/g,'')===cnpjDigitos)){ toast('Já existe outra empresa com esse CNPJ','err'); return; }
+  if(_empresasCache.some(x=>x.id_da_empresa!==companyId&&(x.razao_social||'').trim().toLowerCase()===razao.toLowerCase())){ toast('Já existe outra empresa com essa Razão Social','err'); return; }
 
   const patch={
     razao_social:razao, nome_fantasia:document.getElementById('edEmp_fantasia').value.trim()||razao,
     cnpj, responsavel:resp, email, telefone:document.getElementById('edEmp_tel').value.trim(),
-    updated_at:new Date().toISOString(),
+    atualizado_em:new Date().toISOString(),
   };
   try{
     await DB.updateEmpresa(companyId, patch);
@@ -1924,10 +1924,10 @@ async function salvarEdicaoEmpresa(){
 // item 9: bloquear nega login (Master/Usuário) em todos os módulos.
 async function bloquearEmpresa(companyId){
   if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
-  const e=_empresasCache.find(x=>x.company_id===companyId);
+  const e=_empresasCache.find(x=>x.id_da_empresa===companyId);
   if(!e){ toast('Empresa não encontrada','err'); return; }
   if(!confirm(`Bloquear a empresa "${e.razao_social}"?\n\nTodos os usuários dela ficarão sem acesso até a reativação.`))return;
-  const patch={status:'BLOQUEADA', updated_at:new Date().toISOString()};
+  const patch={status:'BLOQUEADA', atualizado_em:new Date().toISOString()};
   await DB.updateEmpresa(companyId, patch);
   await _auditoriaEmpresa('EMPRESA_BLOQUEADA', {...e, ...patch});
   toast('Empresa bloqueada','ok');
@@ -1935,9 +1935,9 @@ async function bloquearEmpresa(companyId){
 }
 async function reativarEmpresa(companyId){
   if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
-  const e=_empresasCache.find(x=>x.company_id===companyId);
+  const e=_empresasCache.find(x=>x.id_da_empresa===companyId);
   if(!e){ toast('Empresa não encontrada','err'); return; }
-  const patch={status:'ATIVA', updated_at:new Date().toISOString()};
+  const patch={status:'ATIVA', atualizado_em:new Date().toISOString()};
   await DB.updateEmpresa(companyId, patch);
   await _auditoriaEmpresa('EMPRESA_REATIVADA', {...e, ...patch});
   toast('Empresa reativada','ok');
@@ -1947,10 +1947,10 @@ async function reativarEmpresa(companyId){
 // apaga histórico, auditoria, usuários ou a própria empresa.
 async function cancelarEmpresa(companyId){
   if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
-  const e=_empresasCache.find(x=>x.company_id===companyId);
+  const e=_empresasCache.find(x=>x.id_da_empresa===companyId);
   if(!e){ toast('Empresa não encontrada','err'); return; }
   if(!confirm(`Cancelar definitivamente a empresa "${e.razao_social}"?\n\nA licença e todos os módulos serão cancelados. O histórico, a auditoria e os usuários são mantidos.`))return;
-  const patch={status:'CANCELADA', updated_at:new Date().toISOString()};
+  const patch={status:'CANCELADA', atualizado_em:new Date().toISOString()};
   await DB.updateEmpresa(companyId, patch);
   await DB.updateLicenca(companyId, {status:'CANCELADA'});
   for(const m of MODULOS) await DB.setModulo(companyId, m.id, 'BLOQUEADO');
@@ -1960,12 +1960,13 @@ async function cancelarEmpresa(companyId){
 }
 // item 4: Dashboard da Empresa — só leitura.
 async function abrirDashboardEmpresa(companyId){
-  const e=_empresasCache.find(x=>x.company_id===companyId)||(await DB.empresas()).find(x=>x.company_id===companyId);
+  const e=_empresasCache.find(x=>x.id_da_empresa===companyId)||(await DB.empresas()).find(x=>x.id_da_empresa===companyId);
   if(!e){ toast('Empresa não encontrada','err'); return; }
   const licencas=await DB.licencas();
-  const lic=licencas.find(l=>l.company_id===companyId)||{};
-  const usuarios=(await DB.usuarios()).filter(u=>u.company_id===companyId);
-  const modulos=(await DB.modulos()).filter(m=>m.company_id===companyId);
+  const lic=licencas.find(l=>l.id_da_empresa===companyId)||{};
+  const usuarios=(await DB.usuarios()).filter(u=>u.id_da_empresa===companyId);
+  const modulos=(await DB.modulos()).filter(m=>m.id_da_empresa===companyId);
+  // logs: tabela fora do schema confirmado nesta correção — company_id/created_at mantidos como estão.
   const logs=(await DB.logs()).filter(l=>l.company_id===companyId);
   const ultimoAcesso=logs.filter(l=>l.tipo==='LOGIN').sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
 
@@ -1974,15 +1975,15 @@ async function abrirDashboardEmpresa(companyId){
   const fmtData=(iso)=> iso ? new Date(iso).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
   const linhas=[
     ['Empresa', e.nome_fantasia||e.razao_social],
-    ['Company ID', e.company_id],
+    ['Company ID', e.id_da_empresa],
     ['Licença', lic.status||'ATIVA'],
     ['Plano', lic.plano||'FREE'],
     ['Qtd. Módulos', modulos.filter(m=>m.status==='LIBERADO').length+' / '+MODULOS.length],
     ['Usuários Ativos', usuarios.filter(u=>u.ativo!==false).length],
     ['Usuários Inativos', usuarios.filter(u=>u.ativo===false).length],
-    ['Data de Criação', fmtData(e.created_at)],
+    ['Data de Criação', fmtData(e.criado_em)],
     ['Último Acesso', ultimoAcesso?fmtData(ultimoAcesso.created_at):'Nunca acessou'],
-    ['Última Sincronização', fmtData(e.updated_at||e.created_at)],
+    ['Última Sincronização', fmtData(e.atualizado_em||e.criado_em)],
   ];
   document.getElementById('dashEmp_grid').innerHTML=linhas.map(([l,v])=>`<div class="kc"><div class="kv" style="font-size:15px;">${v}</div><div class="kl">${l}</div></div>`).join('');
   abrirModal('mDashboardEmpresa');
@@ -1994,19 +1995,19 @@ async function abrirDashboardEmpresa(companyId){
 async function renderUsuarios(){
   const usuarios=await DB.usuarios();
   const escopo=escopoEmpresa();
-  const lista=escopo?usuarios.filter(u=>u.company_id===escopo):usuarios;
+  const lista=escopo?usuarios.filter(u=>u.id_da_empresa===escopo):usuarios;
   const tb=document.getElementById('tbUsuarios');
   if(!lista.length){ tb.innerHTML='<tr><td colspan="6"><div class="qs-empty">Nenhum usuário.</div></td></tr>'; return; }
   tb.innerHTML=lista.map(u=>`<tr>
-    <td>${u.nome}</td><td style="font-family:var(--mono);">${u.login}</td>
-    <td><span class="master-badge">${ROLES[u.role]||u.role}</span></td>
-    <td style="font-family:var(--mono);">${u.company_id}</td>
+    <td>${u.nome}</td><td style="font-family:var(--mono);">${u['Conecte-se']}</td>
+    <td><span class="master-badge">${ROLES[u.papel]||u.papel}</span></td>
+    <td style="font-family:var(--mono);">${u.id_da_empresa}</td>
     <td>${u.ativo!==false?'<span class="sp sp-lib">Ativo</span>':'<span class="sp sp-blk">Inativo</span>'}</td>
-    <td>${u.role!=='SUPER_ADMIN'?`<button class="btn btn-b btn-xs" onclick="abrirModalEditarUsuario('${u.company_id}','${u.login}')">Editar</button> <button class="btn btn-o btn-xs" onclick="toggleUsuario('${u.company_id}','${u.login}')">${u.ativo!==false?'Desativar':'Ativar'}</button>`:'—'}</td>
+    <td>${u.papel!=='SUPER_ADMIN'?`<button class="btn btn-b btn-xs" onclick="abrirModalEditarUsuario('${u.id_da_empresa}','${u['Conecte-se']}')">Editar</button> <button class="btn btn-o btn-xs" onclick="toggleUsuario('${u.id_da_empresa}','${u['Conecte-se']}')">${u.ativo!==false?'Desativar':'Ativar'}</button>`:'—'}</td>
   </tr>`).join('');
 }
 async function toggleUsuario(companyId,login){
-  const usuarios=await DB.usuarios(); const u=usuarios.find(x=>x.company_id===companyId&&x.login===login);
+  const usuarios=await DB.usuarios(); const u=usuarios.find(x=>x.id_da_empresa===companyId&&x['Conecte-se']===login);
   if(!u)return;
   await DB.updateUsuario(companyId,login,{ativo:u.ativo===false});
   await DB.log('ALTERACAO','Toggle usuário: '+login,companyId);
@@ -2024,8 +2025,8 @@ async function abrirModalUsuario(){
   // Empresas disponíveis
   const empresas=await DB.empresas();
   const escopo=escopoEmpresa();
-  const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
-  document.getElementById('usr_empresa').innerHTML=lista.map(e=>`<option value="${e.company_id}">${e.company_id} — ${e.nome_fantasia||e.razao_social}</option>`).join('');
+  const lista=escopo?empresas.filter(e=>e.id_da_empresa===escopo):empresas;
+  document.getElementById('usr_empresa').innerHTML=lista.map(e=>`<option value="${e.id_da_empresa}">${e.id_da_empresa} — ${e.nome_fantasia||e.razao_social}</option>`).join('');
   ['usr_nome','usr_login','usr_senha'].forEach(id=>document.getElementById(id).value='');
   onRoleChange();
   abrirModal('mUsuario');
@@ -2047,12 +2048,12 @@ async function salvarUsuario(){
   if(role==='GESTOR'&&!can('cadastrarGestor')){ toast('Só Super Admin cria Gestor','err'); return; }
 
   const usuarios=await DB.usuarios();
-  if(usuarios.find(u=>u.company_id===companyId&&u.login===login)){ toast('Login já existe nesta empresa','err'); return; }
+  if(usuarios.find(u=>u.id_da_empresa===companyId&&u['Conecte-se']===login)){ toast('Login já existe nesta empresa','err'); return; }
 
   try{
     await DB.addUsuario({
-      company_id:companyId, nome, login, senha_hash:await hashSenha(senha),
-      role, ativo:true, created_at:new Date().toISOString(),
+      id_da_empresa:companyId, nome, 'Conecte-se':login, senha_hash:await hashSenha(senha),
+      papel:role, ativo:true, criado_em:new Date().toISOString(),
     });
     await DB.log('CADASTRO_USUARIO','Usuário '+login+' ('+role+')',companyId);
     toast('Usuário criado: '+login,'ok');
@@ -2066,13 +2067,13 @@ async function salvarUsuario(){
 async function abrirModalEditarUsuario(companyId, login){
   if(!can('editarUsuario')){ toast('Sem permissão','err'); return; }
   const usuarios=await DB.usuarios();
-  const u=usuarios.find(x=>x.company_id===companyId&&x.login===login);
+  const u=usuarios.find(x=>x.id_da_empresa===companyId&&x['Conecte-se']===login);
   if(!u){ toast('Usuário não encontrado','err'); return; }
 
   document.getElementById('edu_company').value=companyId;
   document.getElementById('edu_login_original').value=login;
   document.getElementById('edu_nome').value=u.nome||'';
-  document.getElementById('edu_login').value=u.login||'';
+  document.getElementById('edu_login').value=u['Conecte-se']||'';
 
   // Perfis que o usuário logado pode atribuir — mesma regra já usada na
   // criação (item 10 estende: quem não pode CRIAR um perfil também não
@@ -2081,12 +2082,12 @@ async function abrirModalEditarUsuario(companyId, login){
   if(can('cadastrarGestor')) atribuiveis.push('GESTOR');
   if(can('cadastrarMaster')) atribuiveis.push('MASTER');
   if(can('cadastrarUsuario')) atribuiveis.push('USUARIO');
-  if(!atribuiveis.includes(u.role)) atribuiveis.unshift(u.role); // garante que o perfil atual sempre apareça, mesmo que não atribuível
-  document.getElementById('edu_role').innerHTML=atribuiveis.map(r=>`<option value="${r}" ${r===u.role?'selected':''}>${ROLES[r]||r}</option>`).join('');
+  if(!atribuiveis.includes(u.papel)) atribuiveis.unshift(u.papel); // garante que o perfil atual sempre apareça, mesmo que não atribuível
+  document.getElementById('edu_role').innerHTML=atribuiveis.map(r=>`<option value="${r}" ${r===u.papel?'selected':''}>${ROLES[r]||r}</option>`).join('');
 
   // Item 4: Empresa é somente leitura.
   const empresas=await DB.empresas();
-  const empresa=empresas.find(e=>e.company_id===companyId);
+  const empresa=empresas.find(e=>e.id_da_empresa===companyId);
   document.getElementById('edu_empresa').value=companyId+(empresa?(' — '+(empresa.nome_fantasia||empresa.razao_social)):'');
 
   document.getElementById('edu_status').value=u.ativo!==false?'ativo':'inativo';
@@ -2117,10 +2118,10 @@ async function salvarEdicaoUsuario(){
   }
 
   const usuarios=await DB.usuarios();
-  if(loginNovo!==loginOriginal && usuarios.some(u=>u.company_id===companyId&&u.login===loginNovo)){
+  if(loginNovo!==loginOriginal && usuarios.some(u=>u.id_da_empresa===companyId&&u['Conecte-se']===loginNovo)){
     toast('Login já existe nesta empresa','err'); return;
   }
-  const atual=usuarios.find(u=>u.company_id===companyId&&u.login===loginOriginal);
+  const atual=usuarios.find(u=>u.id_da_empresa===companyId&&u['Conecte-se']===loginOriginal);
   if(!atual){ toast('Usuário não encontrado','err'); return; }
 
   // Monta só os campos que de fato mudaram — usado tanto no UPDATE
@@ -2128,8 +2129,8 @@ async function salvarEdicaoUsuario(){
   const patch={};
   const camposAlterados=[];
   if(nome!==atual.nome){ patch.nome=nome; camposAlterados.push('Nome'); }
-  if(loginNovo!==atual.login){ patch.login=loginNovo; camposAlterados.push('Login'); }
-  if(role!==atual.role){ patch.role=role; camposAlterados.push('Perfil'); }
+  if(loginNovo!==atual['Conecte-se']){ patch['Conecte-se']=loginNovo; camposAlterados.push('Login'); }
+  if(role!==atual.papel){ patch.papel=role; camposAlterados.push('Perfil'); }
   const ativoNovo=(status==='ativo');
   if(ativoNovo!==(atual.ativo!==false)){ patch.ativo=ativoNovo; camposAlterados.push('Status'); }
   if(obrigarTroca!==!!atual.obrigar_troca_senha){ patch.obrigar_troca_senha=obrigarTroca; camposAlterados.push('Obrigar troca de senha'); }
@@ -2145,7 +2146,7 @@ async function salvarEdicaoUsuario(){
   try{
     // Item 6: somente UPDATE, via a mesma função já usada em toda a
     // Platform — nunca recria/apaga registro, nunca mexe em IDs
-    // (company_id+login continuam sendo a chave usada no WHERE).
+    // (id_da_empresa+Conecte-se continuam sendo a chave usada no WHERE).
     await DB.updateUsuario(companyId, loginOriginal, patch);
     await _registrarAuditoriaEdicaoUsuario(loginNovo, companyId, camposAlterados);
     toast('Usuário atualizado','ok');
@@ -2212,26 +2213,26 @@ function fecharModalSenhaTemporaria(){
 async function renderLicencas(){
   const empresas=await DB.empresas();
   const licencas=await DB.licencas();
-  const licMap={}; licencas.forEach(l=>licMap[l.company_id]=l);
+  const licMap={}; licencas.forEach(l=>licMap[l.id_da_empresa]=l);
   const escopo=escopoEmpresa();
-  const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
+  const lista=escopo?empresas.filter(e=>e.id_da_empresa===escopo):empresas;
   const tb=document.getElementById('tbLicencas');
   if(!lista.length){ tb.innerHTML='<tr><td colspan="7"><div class="qs-empty">Nenhuma licença.</div></td></tr>'; return; }
   tb.innerHTML=lista.map(e=>{
-    const lic=licMap[e.company_id]||{};
+    const lic=licMap[e.id_da_empresa]||{};
     return `<tr>
-    <td>${e.nome_fantasia||e.razao_social}<br><span style="font-family:var(--mono);" style="font-size:9px;color:var(--w40);">${e.company_id}</span></td>
+    <td>${e.nome_fantasia||e.razao_social}<br><span style="font-family:var(--mono);" style="font-size:9px;color:var(--w40);">${e.id_da_empresa}</span></td>
     <td><span class="master-badge">${lic.plano||'FREE'}</span></td>
     <td>${licBadge(lic.status)}</td>
     <td style="font-family:var(--mono);">${lic.validade?new Date(lic.validade).toLocaleDateString('pt-BR'):'—'}</td>
     <td>${lic.qtd_usuarios||'∞'}</td><td>${lic.qtd_modulos||'∞'}</td>
-    <td>${can('editarLicenca')?`<button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Editar</button>`:'—'}</td>
+    <td>${can('editarLicenca')?`<button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.id_da_empresa}')">Editar</button>`:'—'}</td>
   </tr>`;
   }).join('');
 }
 async function abrirModalLicenca(companyId){
   if(!can('editarLicenca')){ toast('Sem permissão','err'); return; }
-  const licencas=await DB.licencas(); const lic=licencas.find(x=>x.company_id===companyId)||{};
+  const licencas=await DB.licencas(); const lic=licencas.find(x=>x.id_da_empresa===companyId)||{};
   document.getElementById('lic_company').value=companyId;
   document.getElementById('lic_plano').value=lic.plano||'FREE';
   document.getElementById('lic_status').value=lic.status||'ATIVA';
@@ -2263,9 +2264,9 @@ async function salvarLicenca(){
 async function initModulosScreen(){
   const empresas=await DB.empresas();
   const escopo=escopoEmpresa();
-  const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
+  const lista=escopo?empresas.filter(e=>e.id_da_empresa===escopo):empresas;
   const sel=document.getElementById('modClienteSel');
-  sel.innerHTML=lista.map(e=>`<option value="${e.company_id}">${e.company_id} — ${e.nome_fantasia||e.razao_social}</option>`).join('');
+  sel.innerHTML=lista.map(e=>`<option value="${e.id_da_empresa}">${e.id_da_empresa} — ${e.nome_fantasia||e.razao_social}</option>`).join('');
   renderModulosCliente();
 }
 async function renderModulosCliente(){
@@ -2274,7 +2275,7 @@ async function renderModulosCliente(){
   if(!companyId){ grid.innerHTML='<div class="qs-empty">Selecione um cliente.</div>'; return; }
   const modulos=await DB.modulos();
   grid.innerHTML=MODULOS.map(m=>{
-    const reg=modulos.find(x=>x.company_id===companyId&&x.modulo===m.id);
+    const reg=modulos.find(x=>x.id_da_empresa===companyId&&x.modulo===m.id);
     const liberado=reg&&reg.status==='LIBERADO';
     const emDev=m.id!=='wms';
     return `<div class="card">
@@ -2379,9 +2380,9 @@ async function sincronizarAgoraEAtualizar(){
 function renderPerfil(){
   const u=SESSION.user;
   document.getElementById('perfNome').textContent=u.nome;
-  document.getElementById('perfLogin').textContent=u.login;
-  document.getElementById('perfRole').textContent=ROLES[u.role]||u.role;
-  document.getElementById('perfEmpresa').textContent=u.company_id;
+  document.getElementById('perfLogin').textContent=u['Conecte-se'];
+  document.getElementById('perfRole').textContent=ROLES[u.papel]||u.papel;
+  document.getElementById('perfEmpresa').textContent=u.id_da_empresa;
 }
 async function alterarSenha(){
   const atual=document.getElementById('pf_atual').value;
@@ -2392,9 +2393,9 @@ async function alterarSenha(){
   if(nova!==nova2){ toast('Senhas não conferem','err'); return; }
   if(await hashSenha(atual)!==SESSION.user.senha_hash){ toast('Senha atual incorreta','err'); return; }
   const novaHash=await hashSenha(nova);
-  await DB.updateUsuario(SESSION.user.company_id,SESSION.user.login,{senha_hash:novaHash});
+  await DB.updateUsuario(SESSION.user.id_da_empresa,SESSION.user['Conecte-se'],{senha_hash:novaHash});
   SESSION.user.senha_hash=novaHash;
-  await DB.log('ALTERACAO_SENHA','Senha alterada: '+SESSION.user.login,SESSION.user.company_id);
+  await DB.log('ALTERACAO_SENHA','Senha alterada: '+SESSION.user['Conecte-se'],SESSION.user.id_da_empresa);
   toast('Senha alterada','ok');
   ['pf_atual','pf_nova','pf_nova2'].forEach(id=>document.getElementById(id).value='');
 }
