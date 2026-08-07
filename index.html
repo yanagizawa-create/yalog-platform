@@ -1088,6 +1088,35 @@ function extrairCampoDoErro(erro){
   const m=msg.match(/'([^']+)'\s*column/i) || msg.match(/column\s+"?([a-zA-Z0-9_]+)"?/i);
   return m?m[1]:null;
 }
+// Sprint YALOG-CORE-001 REVISION (item 4): identifica erro de permissão
+// negada pelo Supabase (RLS/policy) — HTTP 403 ou código Postgres 42501
+// ("insufficient_privilege"), cobrindo tanto o status HTTP quanto a
+// mensagem, para funcionar com qualquer versão do PostgREST/supabase-js.
+function ehErroDePermissao(erro){
+  if(!erro)return false;
+  const status=erro.status||erro.statusCode||(erro.context&&erro.context.status);
+  const msg=String((erro&&(erro.message||erro.details))||erro||'').toLowerCase();
+  return status===403
+    || erro.code==='42501'
+    || msg.includes('permission denied')
+    || msg.includes('row-level security')
+    || msg.includes('rls');
+}
+// Registra em log persistido (auditoria) uma falha real de sincronização
+// (conexão ou permissão) — nunca lança exceção e nunca tenta logar a
+// própria tabela `logs` (evita recursão caso a falha seja nela mesma).
+// Best-effort: se a gravação do log também cair para localStorage, o
+// próprio DB.log já cuida disso normalmente.
+function registrarFalhaSync(tabela, erro){
+  const permissao=ehErroDePermissao(erro);
+  const msg='[YALOG] '+(permissao?'Sincronização não permitida pelo Supabase (403/RLS)':'Falha de conexão com o Supabase')+
+    ' — tabela: '+(tabela||'—')+' — mantida na fila, login e navegação não são interrompidos.';
+  console.warn(msg, erro&&(erro.message||erro));
+  if(tabela==='logs') return; // nunca tenta logar a própria tabela de logs
+  try{
+    DB.log('WARNING', msg).catch(()=>{});
+  }catch(e){/* auditoria é best-effort — nunca bloqueia o fluxo principal */}
+}
 // Função central pedida na Sprint: identifica o campo inexistente,
 // registra o aviso (console + auditoria, item 7) e memoriza o campo
 // para ignorar até futura migração. Nunca interrompe a Platform.
@@ -1168,7 +1197,7 @@ async function withFallback(supabaseFn, localFn, filaOp){
           // frente sem sair do modo Supabase.
           break;
         }
-        console.warn('[YALOG] Falha no Supabase, usando localStorage:', e.message||e);
+        registrarFalhaSync(filaOp&&filaOp.tabela, e);
         SUPABASE_ONLINE=false;
         break;
       }
@@ -1232,7 +1261,7 @@ async function processarFilaSync(){
       continue;
     }
     if(erroReal){
-      console.warn('[YALOG] Sync pendente falhou, mantendo na fila:', erroReal.message||erroReal);
+      registrarFalhaSync(item.tabela, erroReal);
       SUPABASE_ONLINE=false;
       return { ok:false, processados, restante:fila.length };
     }
