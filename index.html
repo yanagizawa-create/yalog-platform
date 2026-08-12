@@ -1746,9 +1746,16 @@ function go(id){
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════
 async function renderDashboard(){
+  // Sprint YALOG-PLATFORM-RECOVERY-001, item 9: log individual por
+  // entidade — cada DB.xxx() já nunca lança exceção (withFallback()
+  // sempre resolve, nunca rejeita), então isto é só instrumentação;
+  // nenhuma lógica de carregamento foi alterada.
   const empresas=await DB.empresas();
+  console.log('[YALOG] Empresas carregadas:', empresas.length, OFF()?'(localStorage)':'(Supabase)');
   const usuarios=await DB.usuarios();
+  console.log('[YALOG] Usuários carregados:', usuarios.length, OFF()?'(localStorage)':'(Supabase)');
   const licencas=await DB.licencas();
+  console.log('[YALOG] Licenças carregadas:', licencas.length, OFF()?'(localStorage)':'(Supabase)');
   const licMap={}; licencas.forEach(l=>licMap[l.company_id]=l);
   const escopo=escopoEmpresa();
   const empV=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
@@ -1763,6 +1770,7 @@ async function renderDashboard(){
   const empBloqueadas=empV.filter(e=>e.status==='BLOQUEADA').length;
   const mastersCount=usrV.filter(u=>u.role==='MASTER').length;
   const modAtivosCount=(await DB.modulos()).filter(m=>(!escopo||m.company_id===escopo)&&m.status==='LIBERADO').length;
+  console.log('[YALOG] Módulos carregados:', modAtivosCount, OFF()?'(localStorage)':'(Supabase)');
 
   document.getElementById('dashKpis').innerHTML=`
     <div class="kc"><span class="ki">🏢</span><div class="kv">${empV.length}</div><div class="kl">Empresas</div></div>
@@ -2047,6 +2055,7 @@ async function abrirDashboardEmpresa(companyId){
 // ═══════════════════════════════════════════════════════════════
 async function renderUsuarios(){
   const usuarios=await DB.usuarios();
+  console.log('[YALOG] Usuários carregados:', usuarios.length, OFF()?'(localStorage)':'(Supabase)');
   const escopo=escopoEmpresa();
   const lista=escopo?usuarios.filter(u=>u.company_id===escopo):usuarios;
   const tb=document.getElementById('tbUsuarios');
@@ -2266,6 +2275,7 @@ function fecharModalSenhaTemporaria(){
 async function renderLicencas(){
   const empresas=await DB.empresas();
   const licencas=await DB.licencas();
+  console.log('[YALOG] Licenças carregadas:', licencas.length, OFF()?'(localStorage)':'(Supabase)');
   const licMap={}; licencas.forEach(l=>licMap[l.company_id]=l);
   const escopo=escopoEmpresa();
   const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
@@ -2327,6 +2337,7 @@ async function renderModulosCliente(){
   const grid=document.getElementById('gridModulos');
   if(!companyId){ grid.innerHTML='<div class="qs-empty">Selecione um cliente.</div>'; return; }
   const modulos=await DB.modulos();
+  console.log('[YALOG] Módulos carregados:', modulos.length, OFF()?'(localStorage)':'(Supabase)');
   grid.innerHTML=MODULOS.map(m=>{
     const reg=modulos.find(x=>x.company_id===companyId&&x.modulo===m.id);
     const liberado=reg&&reg.status==='LIBERADO';
@@ -2357,6 +2368,7 @@ async function toggleModulo(companyId,modulo,liberado){
 async function renderLogs(){
   if(!can('verLogs')){ document.getElementById('tbLogs').innerHTML='<tr><td colspan="4"><div class="qs-empty">Sem permissão.</div></td></tr>'; return; }
   const logs=await DB.logs();
+  console.log('[YALOG] Logs carregados:', logs.length, OFF()?'(localStorage)':'(Supabase)');
   const tb=document.getElementById('tbLogs');
   if(!logs.length){ tb.innerHTML='<tr><td colspan="4"><div class="qs-empty">Nenhum log.</div></td></tr>'; return; }
   const cor={LOGIN:'var(--g2)',LOGOUT:'var(--w40)',FALHA:'var(--r2)',CADASTRO_CLIENTE:'var(--b2)',CADASTRO_USUARIO:'var(--b2)',ALTERACAO:'var(--a2)'};
@@ -2467,6 +2479,7 @@ async function alterarSenha(){
     console.error('[YALOG] Falha ao testar conexão Supabase:',e);
     SUPABASE_ONLINE=false;
   }
+  if(SUPABASE_ONLINE) console.log('%cPLATFORM ONLINE — conexão Supabase OK','color:#4ade80;font-weight:bold;');
 
   // Se já voltamos online com uma fila pendente de uma sessão anterior
   // (ex.: fechou o navegador offline com cadastros feitos), sincroniza
@@ -2482,6 +2495,27 @@ async function alterarSenha(){
   }catch(e){
     console.error('[YALOG] Falha no seed inicial:',e);
   }
+
+  // Sprint YALOG-PLATFORM-RECOVERY-001: seedSuperAdmin() pode gravar um
+  // log de auditoria (DB.log) quando login/senha do Super Admin mudam
+  // no platform-config.js — se ESSA gravação específica falhar (ex.:
+  // RLS bloqueando INSERT em `logs`), withFallback() derruba
+  // SUPABASE_ONLINE globalmente (linha ~1201: qualquer erro não-schema
+  // em QUALQUER chamada faz isso, não só a que falhou) — e todo
+  // carregamento seguinte (empresas/usuários/licenças/módulos/logs)
+  // passaria a vir do localStorage por engano, mesmo com o banco
+  // perfeitamente acessível pra leitura. Reteste aqui restaura o
+  // estado real antes de qualquer tela carregar — sem isso, uma falha
+  // pontual e de baixo risco (um log de auditoria) derrubava a sessão
+  // inteira pro modo offline como se fosse o estado inicial.
+  try{
+    await testarConexaoSupabase();
+  }catch(e){
+    console.error('[YALOG] Falha ao reconfirmar conexão Supabase após seed:',e);
+    SUPABASE_ONLINE=false;
+  }
+  if(SUPABASE_ONLINE) console.log('%cPLATFORM ONLINE — conexão Supabase OK (reconfirmada após seed)','color:#4ade80;font-weight:bold;');
+  else console.warn('[YALOG] Supabase genuinamente indisponível — modo offline é contingência real, não estado inicial.');
 
   // Banner de modo (puramente informativo — protegido). Só aparece em
   // modo offline, como diagnóstico para o Super Admin; o restante da
