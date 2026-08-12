@@ -1176,11 +1176,36 @@ function setUltimaSync(iso){ localStorage.setItem('yalog_ultima_sync', iso); }
 // para o localStorage e marca SUPABASE_ONLINE=false. Quando a
 // gravação cai para local, e filaOp foi informado, ela é enfileirada
 // para ser replicada ao Supabase assim que a conexão voltar.
+// Sprint YALOG-PLATFORM-DATA-RECOVERY-002, item 7: rastreia, por
+// tabela, qual policy/erro de permissão bloqueou — visível e
+// consultável (não só um console.warn perdido no meio de outros
+// logs). Nunca é limpo sozinho — só um novo sucesso na mesma tabela
+// remove o bloqueio registrado.
+const _TABELAS_BLOQUEADAS_RLS = {};
+function _registrarBloqueioRLS(tabela, erro){
+  if(!tabela) return;
+  _TABELAS_BLOQUEADAS_RLS[tabela] = {
+    quando: new Date().toISOString(),
+    mensagem: (erro && (erro.message||erro.details)) || String(erro),
+    codigo: erro && erro.code,
+  };
+  console.error('%c[YALOG] BLOQUEIO DE PERMISSÃO — tabela "'+tabela+'"','color:#ef4444;font-weight:bold;', _TABELAS_BLOQUEADAS_RLS[tabela]);
+}
+function _limparBloqueioRLS(tabela){
+  if(tabela && _TABELAS_BLOQUEADAS_RLS[tabela]) delete _TABELAS_BLOQUEADAS_RLS[tabela];
+}
 async function withFallback(supabaseFn, localFn, filaOp){
   if(!OFF()){
     let tentativas=0;
     while(tentativas<5){
-      try{ return await supabaseFn(); }
+      try{
+        const r=await supabaseFn();
+        // Sprint YALOG-PLATFORM-DATA-RECOVERY-002: sucesso limpa
+        // qualquer bloqueio de permissão registrado antes pra esta
+        // mesma tabela (ex.: policy corrigida no meio da sessão).
+        if(filaOp&&filaOp.tabela) _limparBloqueioRLS(filaOp.tabela);
+        return r;
+      }
       catch(e){
         if(ehErroDeSchema(e)){
           const tabela=(filaOp&&filaOp.tabela)||'—';
@@ -1198,13 +1223,29 @@ async function withFallback(supabaseFn, localFn, filaOp){
           break;
         }
         registrarFalhaSync(filaOp&&filaOp.tabela, e);
-        SUPABASE_ONLINE=false;
+        // Sprint YALOG-PLATFORM-DATA-RECOVERY-002: erro de permissão
+        // (403/RLS/42501) NUNCA derruba SUPABASE_ONLINE globalmente —
+        // é um problema daquela tabela/policy específica, não da
+        // conexão em si. Antes, um 403 em QUALQUER tabela (ex.: logs)
+        // fazia TODAS as outras (empresas/usuários/licenças/módulos)
+        // caírem pro localStorage também, mesmo perfeitamente
+        // acessíveis. Só falha real de conexão (rede, timeout, DNS)
+        // justifica cair pro modo offline pra tudo.
+        if(ehErroDePermissao(e)){
+          _registrarBloqueioRLS(filaOp&&filaOp.tabela, e);
+        }else{
+          SUPABASE_ONLINE=false;
+        }
         break;
       }
     }
   }
   const resultado = localFn();
-  if(filaOp) enfileirar(filaOp.tabela, filaOp.operacao, filaOp.payload, filaOp.match);
+  // item 6/7: filaOp agora também chega em leituras, só com {tabela},
+  // pra permitir o diagnóstico por tabela acima — só enfileira de
+  // verdade quando existe uma operação real de escrita (evita
+  // poluir a fila de sincronização com "leituras pendentes").
+  if(filaOp&&filaOp.operacao) enfileirar(filaOp.tabela, filaOp.operacao, filaOp.payload, filaOp.match);
   return resultado;
 }
 
@@ -1298,7 +1339,8 @@ const DB = {
   async empresas(){
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('empresas').select('*').order('created_at',{ascending:false}); if(error)throw error; return (data||[]).map(_empresaComStatusDerivado); },
-      ()=> LS.get('empresas').map(_empresaComStatusDerivado)
+      ()=> LS.get('empresas').map(_empresaComStatusDerivado),
+      {tabela:'empresas'}
     );
   },
   async addEmpresa(e){
@@ -1324,7 +1366,8 @@ const DB = {
   async usuarios(){
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('usuarios').select('*').order('created_at',{ascending:false}); if(error)throw error; return data||[]; },
-      ()=> LS.get('usuarios')
+      ()=> LS.get('usuarios'),
+      {tabela:'usuarios'}
     );
   },
   async addUsuario(u){
@@ -1346,7 +1389,8 @@ const DB = {
   async licencas(){
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('licencas').select('*'); if(error)throw error; return data||[]; },
-      ()=> LS.get('licencas')
+      ()=> LS.get('licencas'),
+      {tabela:'licencas'}
     );
   },
   async addLicenca(l){
@@ -1368,7 +1412,8 @@ const DB = {
   async modulos(){
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('modulos').select('*'); if(error)throw error; return data||[]; },
-      ()=> LS.get('modulos')
+      ()=> LS.get('modulos'),
+      {tabela:'modulos'}
     );
   },
   async setModulo(companyId, modulo, status){
@@ -1390,7 +1435,8 @@ const DB = {
   async logs(){
     return withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('logs').select('*').order('created_at',{ascending:false}).limit(200); if(error)throw error; return data||[]; },
-      ()=> LS.get('logs').slice().reverse()
+      ()=> LS.get('logs').slice().reverse(),
+      {tabela:'logs'}
     );
   },
 };
@@ -2417,15 +2463,26 @@ async function atualizarDiagnostico(){
   if(elFila) elFila.textContent = fila.length;
 
   if(!supabaseClient){ elNuvem.textContent='—'; return; }
-  if(OFF()){ elNuvem.textContent='indisponível (offline)'; return; }
+  if(OFF()){ elNuvem.textContent='indisponível (offline — falha real de conexão)'; return; }
   elNuvem.textContent='consultando...';
-  try{
-    const resultados=await Promise.all(TABELAS_PLATFORM.map(t=>supabaseClient.from(t).select('*',{count:'exact',head:true})));
-    if(resultados.some(r=>r.error)) throw resultados.find(r=>r.error).error;
-    const nuvemCounts=resultados.map(r=>r.count||0);
-    const nuvemTotal=nuvemCounts.reduce((s,n)=>s+n,0);
-    elNuvem.textContent = nuvemTotal+' (emp:'+nuvemCounts[0]+' · usr:'+nuvemCounts[1]+' · lic:'+nuvemCounts[2]+' · mod:'+nuvemCounts[3]+' · logs:'+nuvemCounts[4]+')';
-  }catch(e){ elNuvem.textContent='indisponível'; }
+  // Sprint YALOG-PLATFORM-DATA-RECOVERY-002, item 6: diagnóstico
+  // separado por tabela — allSettled em vez de Promise.all, pra que
+  // uma tabela bloqueada por RLS não esconda o resultado real das
+  // outras 4. Mostra exatamente qual tabela está bloqueada e por quê,
+  // em vez de um "indisponível" genérico pra tudo.
+  const settled = await Promise.allSettled(TABELAS_PLATFORM.map(t=>supabaseClient.from(t).select('*',{count:'exact',head:true})));
+  const partes = TABELAS_PLATFORM.map((t,i)=>{
+    const r = settled[i];
+    const sigla = {empresas:'emp',usuarios:'usr',licencas:'lic',modulos:'mod',logs:'logs'}[t]||t;
+    if(r.status==='fulfilled' && !r.value.error){
+      return sigla+':'+(r.value.count||0);
+    }
+    const erro = r.status==='fulfilled' ? r.value.error : r.reason;
+    if(ehErroDePermissao(erro)) return sigla+':🔒 bloqueado (RLS)';
+    return sigla+':erro';
+  });
+  const nuvemTotal = settled.reduce((s,r)=> s + (r.status==='fulfilled' && !r.value.error ? (r.value.count||0) : 0), 0);
+  elNuvem.textContent = nuvemTotal+' ('+partes.join(' · ')+')';
 }
 async function testarConexaoEAtualizar(){
   toast('Testando conexão…','info');
