@@ -897,12 +897,29 @@ async function testarConexaoSupabase(){
     const teste=supabaseClient.from('empresas').select('*',{count:'exact',head:true});
     const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),4000));
     const {error}=await Promise.race([teste,timeout]);
-    if(error) throw error;
+    if(error){
+      // Sprint YALOG-PLATFORM-ONLINE-TRUTH-003, item B: o endpoint
+      // respondeu — só a tabela `empresas` pode estar bloqueada por
+      // policy/RLS. Isso é fundamentalmente diferente de "Supabase
+      // indisponível": o banco está online, só essa tabela específica
+      // está sem permissão. Não pode virar OFFLINE por causa disso.
+      if(typeof ehErroDePermissao==='function' && ehErroDePermissao(error)){
+        SUPABASE_ONLINE=true;
+        if(typeof _registrarBloqueioRLS==='function') _registrarBloqueioRLS('empresas', error);
+        console.log('%cYALog Platform — SUPABASE ONLINE (tabela "empresas" bloqueada por RLS)','color:#f59e0b;font-weight:bold;');
+        return;
+      }
+      throw error;
+    }
     SUPABASE_ONLINE=true;
+    if(typeof _limparBloqueioRLS==='function') _limparBloqueioRLS('empresas');
     console.log('%cYALog Platform — MODO SUPABASE (online)','color:#4ade80;font-weight:bold;');
   }catch(e){
+    // Só chega aqui por falha REAL de conexão (timeout, rede, DNS,
+    // endpoint inacessível) — erro de permissão já foi tratado e
+    // retornou antes, sem cair neste catch.
     SUPABASE_ONLINE=false;
-    console.warn('[YALOG] Supabase indisponível, operando com localStorage:', e.message||e);
+    console.warn('[YALOG] Supabase indisponível (falha real de conexão), operando com localStorage:', e.message||e);
   }
 }
 </script>
@@ -1223,28 +1240,35 @@ async function withFallback(supabaseFn, localFn, filaOp){
           break;
         }
         registrarFalhaSync(filaOp&&filaOp.tabela, e);
-        // Sprint YALOG-PLATFORM-DATA-RECOVERY-002: erro de permissão
-        // (403/RLS/42501) NUNCA derruba SUPABASE_ONLINE globalmente —
-        // é um problema daquela tabela/policy específica, não da
-        // conexão em si. Antes, um 403 em QUALQUER tabela (ex.: logs)
-        // fazia TODAS as outras (empresas/usuários/licenças/módulos)
-        // caírem pro localStorage também, mesmo perfeitamente
-        // acessíveis. Só falha real de conexão (rede, timeout, DNS)
-        // justifica cair pro modo offline pra tudo.
         if(ehErroDePermissao(e)){
+          // Sprint YALOG-PLATFORM-ONLINE-TRUTH-003, item C: erro de
+          // permissão NUNCA mais cai silenciosamente pro localStorage
+          // (isso mascarava o problema real, fazendo a Platform mostrar
+          // dados antigos como se fossem atuais). Registra a tabela
+          // bloqueada (visível no Diagnóstico) e propaga um erro
+          // controlado — quem chamou decide o que exibir (lista vazia
+          // + aviso de bloqueio, nunca dado local misturado
+          // silenciosamente). SUPABASE_ONLINE permanece true — o
+          // banco está acessível, só esta tabela está sem permissão.
           _registrarBloqueioRLS(filaOp&&filaOp.tabela, e);
-        }else{
-          SUPABASE_ONLINE=false;
+          const erroControlado=new Error('[RLS] Tabela "'+((filaOp&&filaOp.tabela)||'—')+'" bloqueada por policy/permissão no Supabase.');
+          erroControlado.rlsBlocked=true;
+          erroControlado.tabela=filaOp&&filaOp.tabela;
+          erroControlado.causaOriginal=e;
+          throw erroControlado;
         }
+        // Só falha REAL de conexão (rede, timeout, DNS) chega aqui —
+        // essa sim justifica cair pro modo offline pra tudo.
+        SUPABASE_ONLINE=false;
         break;
       }
     }
   }
   const resultado = localFn();
-  // item 6/7: filaOp agora também chega em leituras, só com {tabela},
-  // pra permitir o diagnóstico por tabela acima — só enfileira de
-  // verdade quando existe uma operação real de escrita (evita
-  // poluir a fila de sincronização com "leituras pendentes").
+  // item 6/7 (DATA-RECOVERY-002): filaOp agora também chega em
+  // leituras, só com {tabela}, pra permitir o diagnóstico por tabela —
+  // só enfileira de verdade quando existe uma operação real de escrita
+  // (evita poluir a fila de sincronização com "leituras pendentes").
   if(filaOp&&filaOp.operacao) enfileirar(filaOp.tabela, filaOp.operacao, filaOp.payload, filaOp.match);
   return resultado;
 }
@@ -1335,13 +1359,22 @@ function _empresaComStatusDerivado(row){
   }
   return row;
 }
+// Sprint YALOG-PLATFORM-ONLINE-TRUTH-003, item D: leituras nunca
+// travam a interface por causa de um bloqueio de RLS — devolve lista
+// vazia (nunca dado local escondido por trás disso; o bloqueio já
+// fica visível no console e no painel de Diagnóstico) e deixa passar
+// qualquer outro tipo de erro normalmente.
+async function _lerComProtecaoRLS(promise){
+  try{ return await promise; }
+  catch(e){ if(e&&e.rlsBlocked) return []; throw e; }
+}
 const DB = {
   async empresas(){
-    return withFallback(
+    return _lerComProtecaoRLS(withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('empresas').select('*').order('created_at',{ascending:false}); if(error)throw error; return (data||[]).map(_empresaComStatusDerivado); },
       ()=> LS.get('empresas').map(_empresaComStatusDerivado),
       {tabela:'empresas'}
-    );
+    ));
   },
   async addEmpresa(e){
     e=prepararPayload('empresas', e, true);
@@ -1364,11 +1397,11 @@ const DB = {
     );
   },
   async usuarios(){
-    return withFallback(
+    return _lerComProtecaoRLS(withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('usuarios').select('*').order('created_at',{ascending:false}); if(error)throw error; return data||[]; },
       ()=> LS.get('usuarios'),
       {tabela:'usuarios'}
-    );
+    ));
   },
   async addUsuario(u){
     u=prepararPayload('usuarios', u, true);
@@ -1387,11 +1420,11 @@ const DB = {
     );
   },
   async licencas(){
-    return withFallback(
+    return _lerComProtecaoRLS(withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('licencas').select('*'); if(error)throw error; return data||[]; },
       ()=> LS.get('licencas'),
       {tabela:'licencas'}
-    );
+    ));
   },
   async addLicenca(l){
     l=prepararPayload('licencas', l);
@@ -1426,18 +1459,28 @@ const DB = {
   },
   async log(tipo,detalhe,companyId){
     const entry=prepararPayload('logs', {tipo,detalhe:detalhe||'',company_id:companyId||null,created_at:new Date().toISOString()});
-    return withFallback(
-      async ()=>{ const {error}=await supabaseClient.from('logs').insert([entry]); if(error)throw error; },
-      ()=>{ const a=LS.get('logs'); a.push(entry); LS.set('logs',a.slice(-1000)); },
-      {tabela:'logs', operacao:'insert', payload:entry}
-    );
+    // Sprint YALOG-PLATFORM-ONLINE-TRUTH-003: log de auditoria é
+    // SEMPRE best-effort — nunca pode bloquear a ação principal que o
+    // disparou (login, criação de empresa, etc.). Com a propagação de
+    // erro de RLS introduzida nesta sprint, sem esta proteção um 403
+    // em `logs` abortaria o login inteiro logo antes de entrarApp(),
+    // mesmo com a autenticação em si já validada com sucesso.
+    try{
+      return await withFallback(
+        async ()=>{ const {error}=await supabaseClient.from('logs').insert([entry]); if(error)throw error; },
+        ()=>{ const a=LS.get('logs'); a.push(entry); LS.set('logs',a.slice(-1000)); },
+        {tabela:'logs', operacao:'insert', payload:entry}
+      );
+    }catch(e){
+      console.warn('[YALOG] DB.log() falhou (best-effort, não bloqueia a ação principal):', e.message||e);
+    }
   },
   async logs(){
-    return withFallback(
+    return _lerComProtecaoRLS(withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('logs').select('*').order('created_at',{ascending:false}).limit(200); if(error)throw error; return data||[]; },
       ()=> LS.get('logs').slice().reverse(),
       {tabela:'logs'}
-    );
+    ));
   },
 };
 
@@ -1454,13 +1497,34 @@ async function seedSuperAdmin(){
   try{ usuarios=await DB.usuarios(); }
   catch(e){ console.error('[YALOG] Falha ao ler usuarios no seed:',e); usuarios=[]; }
 
-  // Há sempre no máximo UM usuário com role SUPER_ADMIN (o "seed").
-  // Localizamos por role, não por login — assim, se o login mudar no
-  // platform-config.js, encontramos o mesmo registro para atualizar
-  // em vez de criar um segundo Super Admin.
-  const existente = usuarios.find(u => u.role === 'SUPER_ADMIN');
+  // Sprint YALOG-PLATFORM-ONLINE-TRUTH-003, item G: localiza TODOS os
+  // registros SUPER_ADMIN, não só o primeiro — a versão anterior
+  // (usuarios.find) nunca detectava nem tratava duplicados, deixando-os
+  // acumular silenciosamente (relatado: 3 registros visíveis).
+  const todosSuperAdmins = usuarios.filter(u => u.role === 'SUPER_ADMIN');
 
-  if(!existente){
+  // Canônico: o que já tem o login configurado em YALOG_CONFIG.SUPER_ADMIN.
+  // Se nenhum bater (ex.: login mudou no config antes de qualquer
+  // sincronização), usa o mais antigo por created_at — critério
+  // estável, não depende da ordem em que o banco devolve as linhas.
+  let canonico = todosSuperAdmins.find(u => String(u.login).trim().toLowerCase() === loginSA);
+  if(!canonico && todosSuperAdmins.length){
+    canonico = todosSuperAdmins.slice().sort((a,b)=> new Date(a.created_at||0) - new Date(b.created_at||0))[0];
+  }
+  const duplicados = todosSuperAdmins.filter(u => u !== canonico);
+
+  // Nunca DELETE — só desativa os excedentes (reversível, item G/IMPORTANTE).
+  if(duplicados.length){
+    console.warn('[YALOG] '+duplicados.length+' registro(s) SUPER_ADMIN duplicado(s) — desativando os excedentes (nunca excluídos):', duplicados.map(u=>u.login));
+    for(const dup of duplicados){
+      if(dup.ativo !== false){
+        try{ await DB.updateUsuario(dup.company_id, dup.login, {ativo:false}); }
+        catch(e){ console.warn('[YALOG] Falha ao desativar SUPER_ADMIN duplicado:', dup.login, e.message||e); }
+      }
+    }
+  }
+
+  if(!canonico){
     const senhaHash = await hashSenha(SA.senha);
     await DB.addUsuario({
       company_id:'YALOG-CORE', nome: SA.nome || 'Super Administrador', login: loginSA,
@@ -1471,20 +1535,23 @@ async function seedSuperAdmin(){
     return;
   }
 
-  // Já existe — verifica se login e/ou senha do config divergem do salvo,
-  // e atualiza automaticamente (nunca depende de limpar o localStorage).
+  // Já existe — verifica se login, senha e/ou status ativo do canônico
+  // divergem do esperado, e atualiza automaticamente (nunca depende de
+  // limpar o localStorage).
   const senhaHashAtual = await hashSenha(SA.senha);
-  const loginMudou = String(existente.login).trim().toLowerCase() !== loginSA;
-  const senhaMudou = existente.senha_hash !== senhaHashAtual;
+  const loginMudou = String(canonico.login).trim().toLowerCase() !== loginSA;
+  const senhaMudou = canonico.senha_hash !== senhaHashAtual;
+  const precisaReativar = canonico.ativo === false;
 
-  if(loginMudou || senhaMudou){
+  if(loginMudou || senhaMudou || precisaReativar){
     const patch = {};
     if(loginMudou) patch.login = loginSA;
     if(senhaMudou) patch.senha_hash = senhaHashAtual;
-    await DB.updateUsuario(existente.company_id, existente.login, patch);
+    if(precisaReativar) patch.ativo = true;
+    await DB.updateUsuario(canonico.company_id, canonico.login, patch);
     console.log('[YALOG] Super Admin já existente');
-    console.log('[YALOG] Super Admin atualizado — login:', loginMudou, '| senha:', senhaMudou);
-    await DB.log('ALTERACAO', 'Super Admin sincronizado com platform-config.js (login:'+loginMudou+', senha:'+senhaMudou+')', 'YALOG-CORE');
+    console.log('[YALOG] Super Admin atualizado — login:', loginMudou, '| senha:', senhaMudou, '| reativado:', precisaReativar);
+    await DB.log('ALTERACAO', 'Super Admin sincronizado com platform-config.js (login:'+loginMudou+', senha:'+senhaMudou+', reativado:'+precisaReativar+')', 'YALOG-CORE');
   } else {
     console.log('[YALOG] Super Admin já existente');
   }
