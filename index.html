@@ -1443,11 +1443,11 @@ const DB = {
     );
   },
   async modulos(){
-    return withFallback(
+    return _lerComProtecaoRLS(withFallback(
       async ()=>{ const {data,error}=await supabaseClient.from('modulos').select('*'); if(error)throw error; return data||[]; },
       ()=> LS.get('modulos'),
       {tabela:'modulos'}
-    );
+    ));
   },
   async setModulo(companyId, modulo, status){
     const row=prepararPayload('modulos', {company_id:companyId,modulo,status,liberado_em:status==='LIBERADO'?new Date().toISOString():null});
@@ -1497,33 +1497,42 @@ async function seedSuperAdmin(){
   try{ usuarios=await DB.usuarios(); }
   catch(e){ console.error('[YALOG] Falha ao ler usuarios no seed:',e); usuarios=[]; }
 
-  // Sprint YALOG-PLATFORM-ONLINE-TRUTH-003, item G: localiza TODOS os
-  // registros SUPER_ADMIN, não só o primeiro — a versão anterior
-  // (usuarios.find) nunca detectava nem tratava duplicados, deixando-os
-  // acumular silenciosamente (relatado: 3 registros visíveis).
   const todosSuperAdmins = usuarios.filter(u => u.role === 'SUPER_ADMIN');
-
-  // Canônico: o que já tem o login configurado em YALOG_CONFIG.SUPER_ADMIN.
-  // Se nenhum bater (ex.: login mudou no config antes de qualquer
-  // sincronização), usa o mais antigo por created_at — critério
-  // estável, não depende da ordem em que o banco devolve as linhas.
   let canonico = todosSuperAdmins.find(u => String(u.login).trim().toLowerCase() === loginSA);
   if(!canonico && todosSuperAdmins.length){
     canonico = todosSuperAdmins.slice().sort((a,b)=> new Date(a.created_at||0) - new Date(b.created_at||0))[0];
   }
   const duplicados = todosSuperAdmins.filter(u => u !== canonico);
 
-  // Nunca DELETE — só desativa os excedentes (reversível, item G/IMPORTANTE).
-  if(duplicados.length){
-    console.warn('[YALOG] '+duplicados.length+' registro(s) SUPER_ADMIN duplicado(s) — desativando os excedentes (nunca excluídos):', duplicados.map(u=>u.login));
-    for(const dup of duplicados){
-      if(dup.ativo !== false){
-        try{ await DB.updateUsuario(dup.company_id, dup.login, {ativo:false}); }
-        catch(e){ console.warn('[YALOG] Falha ao desativar SUPER_ADMIN duplicado:', dup.login, e.message||e); }
-      }
+  // Sprint YALOG-PLATFORM-ONLINE-DATA-005-FIX-2 — regra definitiva:
+  // ONLINE, seedSuperAdmin() é 100% read-only. A FIX anterior já
+  // bloqueava CRIAÇÃO quando nenhum canônico era visível, mas ainda
+  // desativava "duplicados" quando um canônico ERA encontrado — e
+  // essa desativação também é insegura: RLS pode ocultar só PARTE dos
+  // SUPER_ADMIN, fazendo o código enxergar 2 de 3 reais e desativar um
+  // que na verdade não é excedente nenhum (o terceiro, oculto, pode
+  // ser o de fato canônico). Sem visibilidade total garantida, não dá
+  // pra concluir nada com segurança sobre quem é duplicata. Por isso,
+  // com SUPABASE_ONLINE=true, esta função NUNCA mais cria, desativa,
+  // reativa ou altera login/senha de nenhum registro — só diagnostica
+  // e loga. Toda mutação automática do Super Admin fica restrita ao
+  // modo OFFLINE/localStorage, onde não existe ambiguidade de RLS.
+  if(!OFF()){
+    console.log('%c[YALOG] Seed — modo DIAGNÓSTICO (SUPABASE_ONLINE=true, 100% read-only, nenhuma mutação será feita)','color:#60a5fa;font-weight:bold;');
+    console.log('[YALOG] Usuários visíveis:', usuarios.length);
+    console.log('[YALOG] SUPER_ADMIN visíveis:', todosSuperAdmins.length, todosSuperAdmins.map(u=>u.login));
+    console.log('[YALOG] Canônico ('+loginSA+') encontrado:', !!canonico);
+    if(canonico && duplicados.length){
+      console.warn('[YALOG] Possíveis duplicados visíveis (NÃO desativados — leitura pode estar incompleta por RLS):', duplicados.map(u=>u.login));
     }
+    if(!canonico){
+      console.warn('[YALOG] Nenhum SUPER_ADMIN canônico visível — situação inconclusiva (pode ser ausência real OU RLS ocultando a role; usuarios.length>0 não prova nada sobre SUPER_ADMIN em particular). Nenhuma ação automática será tomada online.');
+    }
+    return;
   }
 
+  // A partir daqui, só modo OFFLINE (localStorage) — sem ambiguidade
+  // de RLS possível, mutação automática permanece segura.
   if(!canonico){
     const senhaHash = await hashSenha(SA.senha);
     await DB.addUsuario({
@@ -1531,8 +1540,18 @@ async function seedSuperAdmin(){
       senha_hash: senhaHash, role:'SUPER_ADMIN', ativo:true,
       created_at:new Date().toISOString(),
     });
-    console.log('[YALOG] Super Admin criado');
+    console.log('[YALOG] Super Admin criado (offline/localStorage)');
     return;
+  }
+
+  if(duplicados.length){
+    console.warn('[YALOG] '+duplicados.length+' registro(s) SUPER_ADMIN duplicado(s) (offline/localStorage) — desativando os excedentes (nunca excluídos):', duplicados.map(u=>u.login));
+    for(const dup of duplicados){
+      if(dup.ativo !== false){
+        try{ await DB.updateUsuario(dup.company_id, dup.login, {ativo:false}); }
+        catch(e){ console.warn('[YALOG] Falha ao desativar SUPER_ADMIN duplicado:', dup.login, e.message||e); }
+      }
+    }
   }
 
   // Já existe — verifica se login, senha e/ou status ativo do canônico
@@ -1602,11 +1621,15 @@ async function resetarAmbiente(){
 
   console.log('[YALOG] Dados locais apagados');
 
-  // Recria o Super Admin imediatamente — sistema fica funcional na hora
+  // Sprint YALOG-PLATFORM-ONLINE-DATA-005-FIX-2: com SUPABASE_ONLINE,
+  // seedSuperAdmin() agora só diagnostica, nunca recria — correto aqui
+  // também: se online, o Super Admin real já vive no Supabase, nada
+  // precisa (nem deve) ser recriado. Mensagem reflete o que realmente
+  // aconteceu em vez de alegar recriação incondicional.
   await seedSuperAdmin();
 
-  console.log('[YALOG] Reset concluído — Super Admin disponível');
-  toast('Ambiente resetado. Super Admin recriado.', 'ok');
+  console.log('[YALOG] Reset concluído');
+  toast(OFF() ? 'Ambiente resetado. Super Admin recriado localmente.' : 'Dados locais apagados. Super Admin permanece o do Supabase (online).', 'ok');
 
   // Volta para a tela de login (caso estivesse logado)
   const app = document.getElementById('app');
@@ -1630,17 +1653,13 @@ async function fazerLogin(){
   try{
     console.log('[YALOG] login digitado:', login);
 
-    // ── FAILSAFE (P0) ────────────────────────────────────────────────
-    // Garante que o Super Admin exista ANTES de autenticar. Se o seed do
-    // init() tiver falhado por qualquer motivo (erro de DOM, storage
-    // bloqueado, exceção em outro ponto do boot), o login se auto-repara
-    // aqui em vez de simplesmente falhar.
-    let usuarios=await DB.usuarios();
-    if(!usuarios.length || !usuarios.some(u=>u.role==='SUPER_ADMIN')){
-      console.warn('[YALOG] Super Admin ausente no login — executando seed de emergência');
-      await seedSuperAdmin();
-      usuarios=await DB.usuarios();
-    }
+    // Sprint YALOG-PLATFORM-ONLINE-DATA-005-FIX-2: o failsafe de seed
+    // de emergência foi removido do login por completo — fazerLogin()
+    // agora só consulta e autentica, nunca cria/altera nada em
+    // `usuarios`. Toda a responsabilidade de garantir o Super Admin
+    // fica exclusivamente em seedSuperAdmin(), chamado só no init(),
+    // e mesmo lá agora é 100% read-only quando online.
+    const usuarios=await DB.usuarios();
     // Busca robusta (case-insensitive, sem espaços)
     const usuario=usuarios.find(u=>String(u.login).trim().toLowerCase()===login);
     if(!usuario){
@@ -1660,28 +1679,19 @@ async function fazerLogin(){
     console.log('[YALOG] comparação:', senhaHash===usuario.senha_hash ? 'IGUAIS' : 'DIFERENTES');
 
     if(usuario.senha_hash!==senhaHash){
-      // ── RESGATE (P0) ──────────────────────────────────────────────
-      // Se as credenciais digitadas batem EXATAMENTE com as do
-      // platform-config.js e o usuário é o Super Admin, o hash salvo
-      // está obsoleto (ex.: gravado noutro contexto de navegador, onde
-      // crypto.subtle estava disponível/indisponível). Ressincroniza o
-      // hash e deixa entrar, em vez de travar o acesso do dono do sistema.
-      const SA=YALOG_CONFIG.SUPER_ADMIN||{};
-      const ehSuperAdminDoConfig =
-        usuario.role==='SUPER_ADMIN' &&
-        String(SA.login||'').trim().toLowerCase()===login &&
-        String(SA.senha||'')===senha;
-
-      if(ehSuperAdminDoConfig){
-        console.warn('[YALOG] Hash obsoleto do Super Admin — ressincronizando');
-        await DB.updateUsuario(usuario.company_id, usuario.login, {senha_hash:senhaHash});
-        usuario.senha_hash=senhaHash;
-        await DB.log('ALTERACAO','Hash do Super Admin ressincronizado no login','YALOG-CORE');
-      } else {
-        toast('Senha incorreta','err');
-        await DB.log('FALHA','Senha incorreta: '+login,usuario.company_id);
-        return;
-      }
+      // Sprint YALOG-PLATFORM-FINAL-TRUTH-001, item 6: removido por
+      // completo o bloco "RESGATE (P0)" que existia aqui — ele fazia
+      // DB.updateUsuario(...) pra ressincronizar o hash do Super Admin
+      // sempre que a senha digitada batesse com platform-config.js mas
+      // divergisse do hash salvo. Login agora é 100% read-only quando
+      // online: valida exatamente contra o que está salvo, nunca
+      // corrige o banco sozinho. Se o hash do Super Admin ficar
+      // desatualizado online, a correção passa a ser manual (fora do
+      // fluxo automático de login) — consequência direta e aceita da
+      // regra "zero mutation" desta sprint.
+      toast('Senha incorreta','err');
+      await DB.log('FALHA','Senha incorreta: '+login,usuario.company_id);
+      return;
     }
     console.log('[YALOG] Hash OK');
 
@@ -1840,6 +1850,168 @@ function entrarApp(){
     ).join('');
 
   go('dashboard');
+  // Sprint YALOG-PLATFORM-DATA-TRUTH-004: instrumentação temporária,
+  // evidência real do que carrega logo após o login — não altera
+  // nenhum comportamento, só imprime o que já está acontecendo.
+  _logDataTruthDiagnostico().catch(e=>console.error('[YALOG DATA-TRUTH] Falha na própria instrumentação:', e));
+  // Sprint YALOG-PLATFORM-FINAL-TRUTH-001: diagnóstico central e
+  // estruturado (itens 2/12) — complementa o DATA-TRUTH acima, que já
+  // existia, com o formato oficial desta sprint (status OK/RLS/EMPTY/
+  // ERROR por tabela, nunca misturados numa única flag).
+  diagnosticarEstadoPlatform().catch(e=>console.error('[YALOG PLATFORM TRUTH] Falha na própria instrumentação:', e));
+}
+// Sprint YALOG-PLATFORM-DATA-TRUTH-004, itens 2/3/4: instrumentação
+// temporária e inequívoca. Duas camadas, deliberadamente separadas:
+//  (1) consulta BRUTA, direto no supabaseClient, sem passar por
+//      withFallback/DB — mostra exatamente o que o Supabase devolve,
+//      antes de qualquer transformação do JS (item 3: "está sendo
+//      removida posteriormente pelo JavaScript?").
+//  (2) a mesma leitura que a interface de fato usa (DB.empresas() etc.)
+//      — pra comparar contra (1) e flagrar qualquer divergência.
+// Pode ser removida depois de confirmado onde/se os dados se perdem.
+// Sprint YALOG-PLATFORM-ONLINE-DATA-005, item 3: Health Check real —
+// não usa apenas head:true (que só prova que o endpoint respondeu, não
+// que os dados são visíveis pra role anon/publishable). Faz uma
+// leitura de dados de verdade (select+limit(1)) em cada tabela, e
+// separa explicitamente "conexão funciona" de "dados aparecem" —
+// exatamente a distinção que o item 2 exige e que head:true não
+// consegue fazer sozinho.
+// Sprint YALOG-PLATFORM-FINAL-TRUTH-001, itens 2/12: diagnóstico
+// central e estruturado — separa explicitamente CONEXÃO, FONTE e o
+// status de CADA tabela (OK/RLS/EMPTY/ERROR), nunca misturados numa
+// única variável. Consulta bruta, direto no supabaseClient (não usa
+// DB.empresas() etc. nem withFallback), pra ser a fonte de verdade
+// definitiva, independente de qualquer camada intermediária.
+// SUPABASE_ONLINE nunca é decidido aqui — só lido; esta função é
+// puramente informativa, nunca cria/altera/desativa nada.
+async function diagnosticarEstadoPlatform(){
+  const estado = {
+    connection: SUPABASE_ONLINE ? 'ONLINE' : 'OFFLINE',
+    source: OFF() ? 'LOCAL' : 'SUPABASE',
+    empresas:'ERROR', usuarios:'ERROR', licencas:'ERROR', modulos:'ERROR', logs:'ERROR',
+    empresaTeste: 'YLG-AFD2BC', empresaTesteEncontrada: false,
+    contagens: {},
+    mutacoesUsuariosOnline: 0, // sempre 0 por construção — login/seed são read-only online (garantia de código, ver fazerLogin()/seedSuperAdmin())
+  };
+
+  if(OFF() || !supabaseClient){
+    for(const t of ['empresas','usuarios','licencas','modulos','logs']) estado[t]='OFFLINE';
+    console.log('%c[YALOG PLATFORM TRUTH]','color:#f59e0b;font-weight:bold;', 'CONNECTION: OFFLINE — diagnóstico contra Supabase pulado.');
+    return estado;
+  }
+
+  for(const tabela of ['empresas','usuarios','licencas','modulos','logs']){
+    try{
+      const resp = await supabaseClient.from(tabela).select('*');
+      if(resp.error){
+        estado[tabela] = ehErroDePermissao(resp.error) ? 'RLS' : 'ERROR';
+      }else{
+        const linhas = resp.data||[];
+        estado[tabela] = linhas.length>0 ? 'OK' : 'EMPTY';
+        estado.contagens[tabela] = linhas.length;
+        if(tabela==='empresas'){
+          estado.empresaTesteEncontrada = linhas.some(e=>e.company_id===estado.empresaTeste);
+        }
+      }
+    }catch(e){
+      estado[tabela] = 'ERROR';
+    }
+  }
+
+  console.log('%c[YALOG PLATFORM TRUTH]','color:#60a5fa;font-weight:bold;');
+  console.log('CONNECTION:', estado.connection);
+  console.log('SOURCE:', estado.source);
+  console.log('');
+  console.log('EMPRESAS:', estado.empresas, estado.contagens.empresas!==undefined?'('+estado.contagens.empresas+' registros)':'');
+  console.log('USUARIOS:', estado.usuarios, estado.contagens.usuarios!==undefined?'('+estado.contagens.usuarios+' registros)':'');
+  console.log('LICENCAS:', estado.licencas, estado.contagens.licencas!==undefined?'('+estado.contagens.licencas+' registros)':'');
+  console.log('MODULOS:', estado.modulos, estado.contagens.modulos!==undefined?'('+estado.contagens.modulos+' registros)':'');
+  console.log('LOGS:', estado.logs, estado.contagens.logs!==undefined?'('+estado.contagens.logs+' registros)':'');
+  console.log('');
+  console.log('YLG-AFD2BC:', estado.empresaTesteEncontrada ? 'FOUND' : 'NOT_FOUND');
+  if(estado.connection==='ONLINE' && estado.empresas==='OK' && !estado.empresaTesteEncontrada){
+    console.log('SUPABASE ONLINE, porém YLG-AFD2BC não está visível nesta consulta.');
+  }
+  console.log('');
+  console.log('LOCALSTORAGE:', estado.connection==='ONLINE' ? 'IGNORED_WHEN_ONLINE' : 'IN_USE');
+  console.log('ONLINE_MUTATIONS_USERS:', estado.mutacoesUsuariosOnline);
+  console.log('%c[/YALOG PLATFORM TRUTH]','color:#60a5fa;font-weight:bold;');
+
+  return estado;
+}
+async function _healthCheckPlatform(){
+  // Sprint YALOG-PLATFORM-ONLINE-DATA-005-FIX: SUPABASE_ACESSIVEL não é
+  // mais "pelo menos uma tabela respondeu sem erro" — isso disfarçava
+  // 3 tabelas bloqueadas atrás de 1 que funcionou. Usa SUPABASE_ONLINE,
+  // a mesma flag autoritativa já mantida por testarConexaoSupabase()/
+  // withFallback() nas sprints anteriores — reflete conectividade real,
+  // independente de quantas tabelas têm dados visíveis. Os 4
+  // indicadores *_VISIVEIS abaixo são só informativos — nunca usados
+  // pra decidir criação/exclusão/desativação de nada (essa decisão
+  // vive exclusivamente em seedSuperAdmin(), que nem chama esta função).
+  const r = { SUPABASE_ACESSIVEL:SUPABASE_ONLINE, DADOS_VISIVEIS:false,
+    EMPRESAS_VISIVEIS:false, USUARIOS_VISIVEIS:false, LICENCAS_VISIVEIS:false, MODULOS_VISIVEIS:false,
+    detalhes:{} };
+  if(!supabaseClient || !SUPABASE_ONLINE) return r;
+  for(const tabela of ['empresas','usuarios','licencas','modulos']){
+    try{
+      const resp = await supabaseClient.from(tabela).select('*').limit(1);
+      const visivel = !resp.error && (resp.data||[]).length>0;
+      r[tabela.toUpperCase()+'_VISIVEIS'] = visivel;
+      r.detalhes[tabela] = { status:resp.status, erro:resp.error||null, registros_amostra:(resp.data||[]).length };
+    }catch(e){
+      r.detalhes[tabela] = { excecao: e.message||String(e) };
+    }
+  }
+  r.DADOS_VISIVEIS = r.EMPRESAS_VISIVEIS||r.USUARIOS_VISIVEIS||r.LICENCAS_VISIVEIS||r.MODULOS_VISIVEIS;
+  return r;
+}
+async function _logDataTruthDiagnostico(){
+  console.log('%c[YALOG DATA-TRUTH] ═══════════════════════════════════','color:#60a5fa;font-weight:bold;');
+  console.log('[YALOG DATA-TRUTH] SUPABASE: '+(SUPABASE_ONLINE?'ONLINE':'OFFLINE'));
+  console.log('[YALOG DATA-TRUTH] Projeto/URL utilizado:', YALOG_CONFIG.SUPABASE_URL);
+
+  const health = await _healthCheckPlatform();
+  console.log('[YALOG DATA-TRUTH] SUPABASE_ACESSIVEL:', health.SUPABASE_ACESSIVEL);
+  console.log('[YALOG DATA-TRUTH] DADOS_VISIVEIS:', health.DADOS_VISIVEIS);
+  console.log('[YALOG DATA-TRUTH] EMPRESAS_VISIVEIS:', health.EMPRESAS_VISIVEIS, health.EMPRESAS_VISIVEIS?'':'(0 na amostra — pode ser tabela vazia OU RLS; ver detalhes)');
+  console.log('[YALOG DATA-TRUTH] USUARIOS_VISIVEIS:', health.USUARIOS_VISIVEIS);
+  console.log('[YALOG DATA-TRUTH] LICENCAS_VISIVEIS:', health.LICENCAS_VISIVEIS);
+  console.log('[YALOG DATA-TRUTH] MODULOS_VISIVEIS:', health.MODULOS_VISIVEIS);
+  console.log('[YALOG DATA-TRUTH] Health Check — detalhes por tabela:', health.detalhes);
+
+  if(supabaseClient && SUPABASE_ONLINE){
+    try{
+      const resp = await supabaseClient.from('empresas').select('*');
+      console.log('[YALOG DATA-TRUTH] SELECT empresas (bruto, direto no Supabase) — status HTTP:', resp.status, '| erro:', resp.error);
+      const brutas = resp.data||[];
+      console.log('[YALOG DATA-TRUTH] EMPRESAS (bruto, antes de qualquer transformação do JS):', brutas.length, 'registros');
+      console.log('[YALOG DATA-TRUTH] YLG-AFD2BC no retorno BRUTO do Supabase:', brutas.some(e=>e.company_id==='YLG-AFD2BC')?'ENCONTRADA':'NÃO ENCONTRADA');
+      console.log('[YALOG DATA-TRUTH] Registros brutos completos:', brutas);
+    }catch(e){
+      console.error('[YALOG DATA-TRUTH] SELECT empresas (bruto) lançou exceção:', e);
+    }
+  }else{
+    console.log('[YALOG DATA-TRUTH] Consulta bruta pulada — SUPABASE_ONLINE é false ou client inexistente.');
+  }
+
+  let empresas=[], usuarios=[], licencas=[], modulos=[];
+  try{ empresas=await DB.empresas(); }catch(e){ console.error('[YALOG DATA-TRUTH] DB.empresas() lançou exceção:', e); }
+  try{ usuarios=await DB.usuarios(); }catch(e){ console.error('[YALOG DATA-TRUTH] DB.usuarios() lançou exceção:', e); }
+  try{ licencas=await DB.licencas(); }catch(e){ console.error('[YALOG DATA-TRUTH] DB.licencas() lançou exceção:', e); }
+  try{ modulos=await DB.modulos(); }catch(e){ console.error('[YALOG DATA-TRUTH] DB.modulos() lançou exceção:', e); }
+  const achouViaDB = empresas.some(e=>e.company_id==='YLG-AFD2BC');
+
+  console.log('[YALOG DATA-TRUTH] EMPRESAS (via DB.empresas(), o que a interface usa): '+empresas.length+' registros');
+  console.log('[YALOG DATA-TRUTH] YLG-AFD2BC: '+(achouViaDB?'ENCONTRADA':'NÃO ENCONTRADA'));
+  console.log('[YALOG DATA-TRUTH] USUÁRIOS: '+usuarios.length+' registros');
+  console.log('[YALOG DATA-TRUTH] LICENÇAS: '+licencas.length+' registros');
+  console.log('[YALOG DATA-TRUTH] MÓDULOS: '+modulos.length+' registros');
+  console.log('[YALOG DATA-TRUTH] FONTE: '+(OFF()?'LOCALSTORAGE':'SUPABASE'));
+  if(Object.keys(_TABELAS_BLOQUEADAS_RLS).length){
+    console.log('[YALOG DATA-TRUTH] Tabela(s) bloqueada(s) por RLS nesta sessão:', JSON.stringify(_TABELAS_BLOQUEADAS_RLS));
+  }
+  console.log('%c[YALOG DATA-TRUTH] ═══════════════════════════════════','color:#60a5fa;font-weight:bold;');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1970,7 +2142,17 @@ function filtrarEmpresas(){
 
   const licMap={}; _licencasCache.forEach(l=>licMap[l.company_id]=l);
   const tb=document.getElementById('tbClientes');
-  if(!lista.length){ tb.innerHTML='<tr><td colspan="8"><div class="qs-empty">Nenhuma empresa encontrada.</div></td></tr>'; return; }
+  if(!lista.length){
+    // Sprint YALOG-PLATFORM-FINAL-TRUTH-001, item 9: distingue
+    // explicitamente "bloqueado por RLS" de "genuinamente vazio" — []
+    // sozinho nunca revela qual dos dois é, mas _TABELAS_BLOQUEADAS_RLS
+    // (populado por withFallback() sempre que há erro de permissão
+    // explícito) sabe quando é o primeiro caso.
+    tb.innerHTML = _TABELAS_BLOQUEADAS_RLS['empresas']
+      ? '<tr><td colspan="8"><div class="qs-empty">🔒 Dados não disponíveis — bloqueio de permissão/RLS.</div></td></tr>'
+      : '<tr><td colspan="8"><div class="qs-empty">Nenhuma empresa encontrada.</div></td></tr>';
+    return;
+  }
   const podeGerir=can('gerenciarEmpresa');
   tb.innerHTML=lista.map(e=>{
     const lic=licMap[e.company_id]||{};
@@ -2172,7 +2354,12 @@ async function renderUsuarios(){
   const escopo=escopoEmpresa();
   const lista=escopo?usuarios.filter(u=>u.company_id===escopo):usuarios;
   const tb=document.getElementById('tbUsuarios');
-  if(!lista.length){ tb.innerHTML='<tr><td colspan="6"><div class="qs-empty">Nenhum usuário.</div></td></tr>'; return; }
+  if(!lista.length){
+    tb.innerHTML = _TABELAS_BLOQUEADAS_RLS['usuarios']
+      ? '<tr><td colspan="6"><div class="qs-empty">🔒 Dados não disponíveis — bloqueio de permissão/RLS.</div></td></tr>'
+      : '<tr><td colspan="6"><div class="qs-empty">Nenhum usuário.</div></td></tr>';
+    return;
+  }
   tb.innerHTML=lista.map(u=>`<tr>
     <td>${u.nome}</td><td style="font-family:var(--mono);">${u.login}</td>
     <td><span class="master-badge">${ROLES[u.role]||u.role}</span></td>
@@ -2393,7 +2580,13 @@ async function renderLicencas(){
   const escopo=escopoEmpresa();
   const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
   const tb=document.getElementById('tbLicencas');
-  if(!lista.length){ tb.innerHTML='<tr><td colspan="7"><div class="qs-empty">Nenhuma licença.</div></td></tr>'; return; }
+  if(!lista.length){
+    const bloqueada = _TABELAS_BLOQUEADAS_RLS['empresas'] || _TABELAS_BLOQUEADAS_RLS['licencas'];
+    tb.innerHTML = bloqueada
+      ? '<tr><td colspan="7"><div class="qs-empty">🔒 Dados não disponíveis — bloqueio de permissão/RLS.</div></td></tr>'
+      : '<tr><td colspan="7"><div class="qs-empty">Nenhuma licença.</div></td></tr>';
+    return;
+  }
   tb.innerHTML=lista.map(e=>{
     const lic=licMap[e.company_id]||{};
     return `<tr>
@@ -2451,6 +2644,15 @@ async function renderModulosCliente(){
   if(!companyId){ grid.innerHTML='<div class="qs-empty">Selecione um cliente.</div>'; return; }
   const modulos=await DB.modulos();
   console.log('[YALOG] Módulos carregados:', modulos.length, OFF()?'(localStorage)':'(Supabase)');
+  if(_TABELAS_BLOQUEADAS_RLS['modulos']){
+    // Sprint YALOG-PLATFORM-FINAL-TRUTH-001, item 9: sem isto, todo
+    // módulo apareceria como "Bloqueado" (por falta de registro
+    // encontrado) mesmo quando o problema real é falta de permissão
+    // de leitura, não uma decisão de negócio — visualmente idêntico e
+    // enganoso sem este aviso explícito.
+    grid.innerHTML = '<div class="qs-empty" style="grid-column:1/-1;">🔒 Dados não disponíveis — bloqueio de permissão/RLS.</div>';
+    return;
+  }
   grid.innerHTML=MODULOS.map(m=>{
     const reg=modulos.find(x=>x.company_id===companyId&&x.modulo===m.id);
     const liberado=reg&&reg.status==='LIBERADO';
@@ -2483,7 +2685,12 @@ async function renderLogs(){
   const logs=await DB.logs();
   console.log('[YALOG] Logs carregados:', logs.length, OFF()?'(localStorage)':'(Supabase)');
   const tb=document.getElementById('tbLogs');
-  if(!logs.length){ tb.innerHTML='<tr><td colspan="4"><div class="qs-empty">Nenhum log.</div></td></tr>'; return; }
+  if(!logs.length){
+    tb.innerHTML = _TABELAS_BLOQUEADAS_RLS['logs']
+      ? '<tr><td colspan="4"><div class="qs-empty">🔒 Dados não disponíveis — bloqueio de permissão/RLS.</div></td></tr>'
+      : '<tr><td colspan="4"><div class="qs-empty">Nenhum log.</div></td></tr>';
+    return;
+  }
   const cor={LOGIN:'var(--g2)',LOGOUT:'var(--w40)',FALHA:'var(--r2)',CADASTRO_CLIENTE:'var(--b2)',CADASTRO_USUARIO:'var(--b2)',ALTERACAO:'var(--a2)'};
   tb.innerHTML=logs.slice(0,200).map(l=>`<tr>
     <td style="font-family:var(--mono);" style="font-size:10px;">${new Date(l.created_at).toLocaleString('pt-BR')}</td>
