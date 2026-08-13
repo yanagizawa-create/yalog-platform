@@ -1576,6 +1576,101 @@ async function seedSuperAdmin(){
   }
 }
 
+// Sprint YALOG-PLATFORM-RECOVERY-002-FIX-2: removida por completo a
+// possibilidade de considerar a ausência "confirmada" online com base
+// em empresas TAMBÉM estar vazia. Esse sinal era um indício lógico
+// razoável, mas ainda era uma inferência, não uma prova — e a regra
+// desta sprint é definitiva: online, sem uma fonte autoritativa (ex.:
+// confirmação humana direta, ou verificação fora do alcance do
+// cliente com anon key), a ausência do Super Admin NUNCA pode ser
+// tratada como certa. SELECT bloqueado por RLS nunca gera erro — só
+// devolve [], indistinguível de uma tabela genuinamente vazia — e
+// esse é exatamente o cenário que gerou os 3 Super Admins duplicados
+// no passado. Online: sem SUPER_ADMIN visível = sempre INCONCLUSIVE,
+// nunca NOT_FOUND_CONFIRMED. Criação automática só continua permitida
+// em modo OFFLINE (localStorage), onde não existe ambiguidade de RLS.
+async function verificarAusenciaSuperAdmin(){
+  let usuarios=[];
+  try{ usuarios=await DB.usuarios(); }
+  catch(e){ console.error('[PLATFORM RECOVERY] Falha ao verificar usuarios:',e); return 'INCONCLUSIVE'; }
+  if(usuarios.some(u=>u.role==='SUPER_ADMIN')) return 'FOUND';
+
+  if(OFF()){
+    // Offline: localStorage é a única fonte, sem ambiguidade de RLS
+    // possível — [] aqui é mesmo ausência real.
+    return 'NOT_FOUND_CONFIRMED';
+  }
+
+  // Online e nenhum SUPER_ADMIN visível: nunca há prova autoritativa
+  // suficiente — sempre inconclusivo, sem exceção.
+  console.warn('[PLATFORM RECOVERY] Nenhum SUPER_ADMIN visível com SUPABASE_ONLINE=true — ausência NUNCA é considerada confirmada online (só offline). Tratando como inconclusivo.');
+  return 'INCONCLUSIVE';
+}
+
+// Sprint YALOG-PLATFORM-RECOVERY-002-FIX — recuperação do Super Admin,
+// SEM confirm() (item 3): a segurança contra duplicação não depende
+// mais de uma pessoa clicar "OK" — depende de verificarAusenciaSuperAdmin()
+// só permitir criação quando a ausência está logicamente confirmada
+// (item 8). Item 5: nunca escolhe outro SUPER_ADMIN "porque está
+// visível" — só o login exatamente configurado em
+// YALOG_CONFIG.SUPER_ADMIN. Item 6: encontrado o canônico, só ELE é
+// tocado — nenhum outro SUPER_ADMIN existente é excluído, desativado,
+// renomeado ou tem a senha sobrescrita.
+async function recuperarSuperAdmin(senhaDigitada){
+  const SA=YALOG_CONFIG.SUPER_ADMIN;
+  if(!SA || !SA.login){ console.warn('[PLATFORM RECOVERY] SUPER_ADMIN não configurado em platform-config.js'); return {ok:false, motivo:'sem-config'}; }
+  const loginSA=String(SA.login).trim().toLowerCase();
+  if(String(senhaDigitada)!==String(SA.senha)){
+    return {ok:false, motivo:'senha-nao-confere'};
+  }
+
+  let usuarios=[];
+  try{ usuarios=await DB.usuarios(); }
+  catch(e){ console.error('[PLATFORM RECOVERY] Falha ao ler usuarios:',e); return {ok:false, motivo:'erro-leitura'}; }
+
+  // Item 5: só o login exatamente configurado — nunca um fallback
+  // "qualquer SUPER_ADMIN visível".
+  const existente = usuarios.find(u => u.role==='SUPER_ADMIN' && String(u.login).trim().toLowerCase()===loginSA);
+
+  if(existente){
+    // Caso A (item 4): encontrado — corrige só este registro
+    // canônico. Item 7: sem confirm() adicional nenhum.
+    const senhaHash = await hashSenha(SA.senha);
+    const patch = {};
+    if((SA.nome||'Super Administrador')!==existente.nome) patch.nome = SA.nome||'Super Administrador';
+    if(existente.senha_hash!==senhaHash) patch.senha_hash = senhaHash;
+    if(existente.ativo===false) patch.ativo = true;
+    if(Object.keys(patch).length){
+      await DB.updateUsuario(existente.company_id, existente.login, patch);
+      console.log('[PLATFORM RECOVERY] Super Admin canônico atualizado:', Object.keys(patch));
+      await DB.log('ALTERACAO','Super Admin canônico restaurado (RECOVERY-002-FIX): '+Object.keys(patch).join(','),'YALOG-CORE').catch(()=>{});
+    }
+    return {ok:true, usuario:{...existente, ...patch}, veredito:'FOUND'};
+  }
+
+  // Caso B/C (itens 4/8): não encontrado — só cria se a ausência for
+  // logicamente confirmada, nunca por causa de um [] ambíguo.
+  const veredito = await verificarAusenciaSuperAdmin();
+  if(veredito!=='NOT_FOUND_CONFIRMED'){
+    console.warn('%c[PLATFORM RECOVERY]','color:#f59e0b;font-weight:bold;');
+    console.warn('Não foi possível confirmar a ausência do Super Admin.');
+    console.warn('Nenhuma alteração foi realizada.');
+    return {ok:false, motivo:'inconclusive', veredito};
+  }
+
+  // Caso C: ausência confirmada — cria exatamente 1.
+  const senhaHash2 = await hashSenha(SA.senha);
+  const novo = {
+    company_id:'YALOG-CORE', nome: SA.nome || 'Super Administrador', login: loginSA,
+    senha_hash: senhaHash2, role:'SUPER_ADMIN', ativo:true,
+    created_at:new Date().toISOString(),
+  };
+  await DB.addUsuario(novo);
+  console.log('[PLATFORM RECOVERY] Super Admin criado — ausência confirmada.');
+  await DB.log('ALTERACAO','Super Admin criado — ausência confirmada (RECOVERY-002-FIX)','YALOG-CORE').catch(()=>{});
+  return {ok:true, usuario:novo, veredito:'NOT_FOUND_CONFIRMED'};
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MONITOR DE CONEXÃO — detecta o retorno do Supabase sozinho e
 // dispara a sincronização da fila pendente, sem ação do usuário
@@ -1653,15 +1748,32 @@ async function fazerLogin(){
   try{
     console.log('[YALOG] login digitado:', login);
 
-    // Sprint YALOG-PLATFORM-ONLINE-DATA-005-FIX-2: o failsafe de seed
-    // de emergência foi removido do login por completo — fazerLogin()
-    // agora só consulta e autentica, nunca cria/altera nada em
-    // `usuarios`. Toda a responsabilidade de garantir o Super Admin
-    // fica exclusivamente em seedSuperAdmin(), chamado só no init(),
-    // e mesmo lá agora é 100% read-only quando online.
-    const usuarios=await DB.usuarios();
+    // Sprint YALOG-PLATFORM-ONLINE-DATA-005-FIX-2: fazerLogin() nunca
+    // cria/altera nada em `usuarios` sozinho pra qualquer usuário
+    // comum. Sprint RECOVERY-002-FIX: exceção única e controlada —
+    // login===loginSA (o Super Admin configurado) pode acionar
+    // recuperarSuperAdmin() automaticamente, SEM confirm() (item 3) —
+    // a segurança contra duplicação está dentro da própria função
+    // (verificarAusenciaSuperAdmin(), item 8), não numa pergunta pra
+    // pessoa decidir.
+    let usuarios=await DB.usuarios();
+    const loginSA = String((YALOG_CONFIG.SUPER_ADMIN||{}).login||'').trim().toLowerCase();
     // Busca robusta (case-insensitive, sem espaços)
-    const usuario=usuarios.find(u=>String(u.login).trim().toLowerCase()===login);
+    let usuario=usuarios.find(u=>String(u.login).trim().toLowerCase()===login);
+
+    if(!usuario && login===loginSA && loginSA){
+      console.warn('[PLATFORM RECOVERY] Super Admin não localizado em '+usuarios.length+' registro(s) — acionando recuperação automática controlada.');
+      const rec = await recuperarSuperAdmin(senha);
+      if(rec.ok){
+        usuario = rec.usuario;
+      } else if(rec.motivo==='inconclusive'){
+        toast('Não foi possível confirmar a ausência do Super Admin. Verifique a conexão/permissões e tente novamente.','err');
+        return;
+      }
+      // rec.motivo==='senha-nao-confere': cai no fluxo normal abaixo
+      // (usuario continua undefined → "Usuário não encontrado"), sem
+      // vazar ao usuário se o problema foi credencial ou ausência.
+    }
     if(!usuario){
       console.warn('[YALOG] login não encontrado:', login);
       toast('Usuário não encontrado','err');
@@ -1679,19 +1791,21 @@ async function fazerLogin(){
     console.log('[YALOG] comparação:', senhaHash===usuario.senha_hash ? 'IGUAIS' : 'DIFERENTES');
 
     if(usuario.senha_hash!==senhaHash){
-      // Sprint YALOG-PLATFORM-FINAL-TRUTH-001, item 6: removido por
-      // completo o bloco "RESGATE (P0)" que existia aqui — ele fazia
-      // DB.updateUsuario(...) pra ressincronizar o hash do Super Admin
-      // sempre que a senha digitada batesse com platform-config.js mas
-      // divergisse do hash salvo. Login agora é 100% read-only quando
-      // online: valida exatamente contra o que está salvo, nunca
-      // corrige o banco sozinho. Se o hash do Super Admin ficar
-      // desatualizado online, a correção passa a ser manual (fora do
-      // fluxo automático de login) — consequência direta e aceita da
-      // regra "zero mutation" desta sprint.
-      toast('Senha incorreta','err');
-      await DB.log('FALHA','Senha incorreta: '+login,usuario.company_id);
-      return;
+      // Sprint YALOG-PLATFORM-FINAL-TRUTH-001, item 6: removido o
+      // "RESGATE (P0)" automático-e-silencioso original. Sprint
+      // RECOVERY-002-FIX: reintroduzido só para o Super Admin
+      // canônico, sem confirm() (item 7) — recuperarSuperAdmin() já
+      // valida a senha contra a configuração antes de tocar em
+      // qualquer coisa, então chamar aqui é seguro.
+      if(usuario.role==='SUPER_ADMIN' && login===loginSA){
+        const rec = await recuperarSuperAdmin(senha);
+        if(rec.ok){ usuario.senha_hash=senhaHash; }
+      }
+      if(usuario.senha_hash!==senhaHash){
+        toast('Senha incorreta','err');
+        await DB.log('FALHA','Senha incorreta: '+login,usuario.company_id);
+        return;
+      }
     }
     console.log('[YALOG] Hash OK');
 
@@ -1859,6 +1973,44 @@ function entrarApp(){
   // existia, com o formato oficial desta sprint (status OK/RLS/EMPTY/
   // ERROR por tabela, nunca misturados numa única flag).
   diagnosticarEstadoPlatform().catch(e=>console.error('[YALOG PLATFORM TRUTH] Falha na própria instrumentação:', e));
+  // Sprint YALOG-PLATFORM-RECOVERY-002-FIX, item 14: diagnóstico
+  // dedicado de recuperação — SUPERADMIN usa FOUND/NOT_FOUND/
+  // INCONCLUSIVE de verdade (nunca mascara INCONCLUSIVE como
+  // NOT_FOUND). Reaproveita diagnosticarEstadoPlatform() (preservada,
+  // sem alteração) em vez de duplicar consultas ao Supabase.
+  (async ()=>{
+    try{
+      const est = await diagnosticarEstadoPlatform();
+      const licencas = await DB.licencas().catch(()=>[]);
+      const modulos = await DB.modulos().catch(()=>[]);
+      const licencaYLG = licencas.find(l=>l.company_id==='YLG-AFD2BC');
+      const moduloYLG = modulos.find(m=>m.company_id==='YLG-AFD2BC');
+      const superAdminStatus = (SESSION&&SESSION.user&&SESSION.user.role==='SUPER_ADMIN')
+        ? 'OK' : await verificarAusenciaSuperAdmin();
+
+      if(est.connection==='ONLINE' && est.empresas==='OK' && !est.empresaTesteEncontrada){
+        console.warn('[PLATFORM RECOVERY]\nEmpresa YLG-AFD2BC não encontrada no Supabase.\nNenhuma empresa foi recriada automaticamente.');
+      }
+      if(est.connection==='ONLINE' && !licencaYLG){
+        console.warn('[PLATFORM RECOVERY]\nLicença YLG-AFD2BC não encontrada.\nNenhuma licença recriada.');
+      }
+      if(est.connection==='ONLINE' && !moduloYLG){
+        console.warn('[PLATFORM RECOVERY]\nMódulo(s) da YLG-AFD2BC não encontrado(s).\nNenhum módulo recriado automaticamente.');
+      }
+      if(superAdminStatus==='INCONCLUSIVE'){
+        console.warn('[PLATFORM RECOVERY]\nNão foi possível confirmar a ausência do Super Admin.\nNenhuma alteração foi realizada.');
+      }
+
+      console.log('%c[PLATFORM RECOVERY]','color:#4ade80;font-weight:bold;');
+      console.log('SUPABASE:', est.connection);
+      console.log('SUPERADMIN:', superAdminStatus==='FOUND'?'OK':superAdminStatus);
+      console.log('YLG-AFD2BC:', est.empresaTesteEncontrada ? 'FOUND' : 'NOT_FOUND');
+      console.log('LICENCA:', licencaYLG ? 'FOUND' : 'NOT_FOUND');
+      console.log('MODULOS:', moduloYLG ? 'FOUND' : 'NOT_FOUND');
+      console.log('SESSION:', SESSION ? 'CREATED' : 'NONE');
+      console.log('%c[/PLATFORM RECOVERY]','color:#4ade80;font-weight:bold;');
+    }catch(e){ console.error('[PLATFORM RECOVERY] Falha na própria instrumentação:', e); }
+  })();
 }
 // Sprint YALOG-PLATFORM-DATA-TRUTH-004, itens 2/3/4: instrumentação
 // temporária e inequívoca. Duas camadas, deliberadamente separadas:
