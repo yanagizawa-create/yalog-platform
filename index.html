@@ -875,9 +875,22 @@ function supabaseConfigurado(){
 if (!YALOG_CONFIG.FORCAR_OFFLINE && supabaseConfigurado()) {
   try {
     if (typeof window !== 'undefined' && window.supabase && window.supabase.createClient) {
+      // Sprint YALOG-PLATFORM-AUTH-SESSION-FIX-001: a Platform nunca
+      // usou (nem deveria usar) Supabase Auth como mecanismo de
+      // sessão — a autenticação própria é 100% via public.usuarios +
+      // senha_hash + SESSION local (carregarSessao()/fazerLogin()).
+      // persistSession:false garante que este client nunca leia nem
+      // grave nenhuma sessão Auth no localStorage — elimina a
+      // possibilidade de uma sessão Auth antiga (de qualquer origem,
+      // inclusive testes manuais no console) ser restaurada e fazer
+      // as chamadas a `usuarios`/`empresas`/etc. saírem como role
+      // `authenticated` em vez de `anon`, que é o role pra que as
+      // policies RLS desta Platform foram desenhadas. Resolvido na
+      // origem — não precisa de nenhum signOut() manual depois.
       supabaseClient = window.supabase.createClient(
         YALOG_CONFIG.SUPABASE_URL,
-        YALOG_CONFIG.SUPABASE_ANON_KEY
+        YALOG_CONFIG.SUPABASE_ANON_KEY,
+        { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
       );
     } else {
       console.warn('[YALOG] SDK do Supabase não carregado (sem internet ou CDN bloqueado). Operando offline.');
