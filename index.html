@@ -1495,6 +1495,85 @@ const DB = {
       {tabela:'logs'}
     ));
   },
+  // ═══════════════════════════════════════════════════════════════
+  // SPRINT YALOG-PLATFORM-CLEANUP-001 — exclusão definitiva de empresa
+  // ═══════════════════════════════════════════════════════════════
+  // Não existia nenhuma função de DELETE em DB até esta sprint (só
+  // add/update). deleteEmpresaCascata() é a única forma programática de
+  // apagar uma empresa e seus registros relacionados — nunca chamada
+  // diretamente pela UI (ver excluirEmpresaPermanente(), que faz a
+  // confirmação forte e a proteção de company_id antes de chegar aqui).
+  // Sempre faz SELECT logo antes de cada DELETE (item 17 da sprint) e
+  // devolve as contagens exatas do que foi (ou seria) removido.
+  async _selecionarPorEmpresa(tabela, companyId){
+    if(OFF()||!supabaseClient) return LS.get(tabela).filter(r=>r.company_id===companyId);
+    try{
+      const {data,error}=await supabaseClient.from(tabela).select('*').eq('company_id',companyId);
+      if(error) throw error;
+      return data||[];
+    }catch(e){
+      console.warn('[YALOG CLEANUP] SELECT prévio falhou em', tabela, '— tratando como vazio, nada será excluído nesta tabela:', e.message||e);
+      return [];
+    }
+  },
+  async deleteEmpresaCascata(companyId){
+    const resultado={company_id:companyId, licencas:0, modulos:0, usuarios:0, logs:0, empresa:false, erros:[]};
+
+    // Sempre SELECT antes de qualquer DELETE (item 17) — e é o próprio
+    // resultado do SELECT que decide a contagem reportada, nunca uma
+    // suposição de "quantas linhas o DELETE deveria ter afetado".
+    const [licRows, modRows, usrRows] = await Promise.all([
+      this._selecionarPorEmpresa('licencas', companyId),
+      this._selecionarPorEmpresa('modulos', companyId),
+      this._selecionarPorEmpresa('usuarios', companyId),
+    ]);
+    const logRows = await this._selecionarPorEmpresa('logs', companyId);
+    console.log('[PLATFORM CLEANUP] SELECT prévio — company_id:', companyId,
+      '| licencas:', licRows.length, '| modulos:', modRows.length,
+      '| usuarios:', usrRows.length, '| logs:', logRows.length);
+
+    const excluirTabela = async (tabela, linhas)=>{
+      if(!linhas.length) return 0;
+      if(OFF()||!supabaseClient){
+        const a=LS.get(tabela).filter(r=>r.company_id!==companyId);
+        LS.set(tabela,a);
+        return linhas.length;
+      }
+      try{
+        const {error}=await supabaseClient.from(tabela).delete().eq('company_id',companyId);
+        if(error) throw error;
+        return linhas.length;
+      }catch(e){
+        resultado.erros.push(tabela+': '+(e.message||e));
+        console.error('[PLATFORM CLEANUP] DELETE falhou em', tabela, 'para', companyId, e);
+        return 0;
+      }
+    };
+
+    resultado.licencas = await excluirTabela('licencas', licRows);
+    resultado.modulos  = await excluirTabela('modulos', modRows);
+    resultado.usuarios = await excluirTabela('usuarios', usrRows);
+    resultado.logs     = await excluirTabela('logs', logRows);
+
+    // Empresa por último — só depois que os relacionados já foram
+    // tratados, para nunca deixar licenças/módulos/usuários órfãos
+    // apontando para um company_id que não existe mais em `empresas`.
+    if(OFF()||!supabaseClient){
+      const a=LS.get('empresas').filter(e=>e.company_id!==companyId);
+      LS.set('empresas',a);
+      resultado.empresa=true;
+    }else{
+      try{
+        const {error}=await supabaseClient.from('empresas').delete().eq('company_id',companyId);
+        if(error) throw error;
+        resultado.empresa=true;
+      }catch(e){
+        resultado.erros.push('empresas: '+(e.message||e));
+        console.error('[PLATFORM CLEANUP] DELETE falhou em empresas para', companyId, e);
+      }
+    }
+    return resultado;
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -1946,6 +2025,7 @@ function can(acao){
     verLogs:['SUPER_ADMIN','GESTOR'],
     verTodasEmpresas:['SUPER_ADMIN','GESTOR'],
     configurar:['SUPER_ADMIN'],
+    excluirEmpresaPermanente:['SUPER_ADMIN'],
   };
   return (P[acao]||[]).includes(r);
 }
@@ -2180,6 +2260,92 @@ async function _logDataTruthDiagnostico(){
 }
 
 // ═══════════════════════════════════════════════════════════════
+// SPRINT YALOG-PLATFORM-CLEANUP-001, item 13 — DIAGNÓSTICO FINAL ÚNICO
+// ═══════════════════════════════════════════════════════════════
+// Reaproveita diagnosticarEstadoPlatform() (já existente, cobre
+// empresas/usuários/licenças/módulos/logs) e só ACRESCENTA o que ainda
+// não existia: o lado do WMS (wms_kv_store), que a Platform nunca
+// consultou até agora. Não duplica nenhuma lógica de leitura já escrita
+// — chama a função existente e lê os mesmos campos que ela já expõe.
+async function diagnosticarEstadoFinalYALog(){
+  const plataforma = await diagnosticarEstadoPlatform();
+
+  const wms = {
+    conexao: SUPABASE_ONLINE ? 'ONLINE' : 'OFFLINE',
+    encontrado: false, company_id: null, module_id: null,
+    valueExiste: false, valueLength: null, updatedAt: null, installationId: null,
+    erro: null,
+  };
+  if(supabaseClient && SUPABASE_ONLINE){
+    try{
+      // Mesmo projeto Supabase do WMS (mesma SUPABASE_URL) — a Platform
+      // nunca faz Anonymous Sign-In (não é o mecanismo dela), então esta
+      // consulta pode voltar bloqueada por RLS (installation_id=auth.uid()
+      // exige uma sessão anônima que a Platform não tem) — tratado como
+      // diagnóstico, nunca como erro fatal.
+      const resp = await supabaseClient.from('wms_kv_store').select('key,value,company_id,module_id,updated_at,installation_id').eq('key','wms_3cs_v2026');
+      if(resp.error){
+        wms.erro = ehErroDePermissao(resp.error) ? 'RLS_BLOCKED' : (resp.error.message||String(resp.error));
+      }else{
+        const linhas = resp.data||[];
+        if(linhas.length){
+          // Se por algum motivo houver mais de uma linha (ex.: mistura
+          // de tenant ainda não resolvida), reporta a primeira mas avisa
+          // — nunca escolhe silenciosamente qual é "a certa".
+          if(linhas.length>1) console.warn('[WMS RECOVERY CHECK] ATENÇÃO: mais de uma linha com key=wms_3cs_v2026 (' + linhas.length + ') — possível mistura de tenant, não decidido automaticamente.');
+          const row=linhas[0];
+          wms.encontrado=true;
+          wms.company_id=row.company_id;
+          wms.module_id=row.module_id;
+          wms.valueExiste = row.value!==null && row.value!==undefined;
+          wms.valueLength = wms.valueExiste ? JSON.stringify(row.value).length : 0;
+          wms.updatedAt = row.updated_at;
+          wms.installationId = row.installation_id;
+        }
+      }
+    }catch(e){ wms.erro = e.message||String(e); }
+  }
+
+  console.log('%c[YALOG FINAL STATE]','color:#60a5fa;font-weight:bold;');
+  console.log('');
+  console.log('SUPABASE:', plataforma.connection);
+  console.log('');
+  console.log('EMPRESAS:');
+  console.log('  total:', plataforma.contagens.empresas!==undefined ? plataforma.contagens.empresas : plataforma.empresas);
+  console.log('  YLG-AFD2BC:', plataforma.empresaTesteEncontrada ? 'FOUND' : 'NOT_FOUND');
+  console.log('');
+  console.log('LICENCAS:');
+  console.log('  total:', plataforma.contagens.licencas!==undefined ? plataforma.contagens.licencas : plataforma.licencas);
+  console.log('');
+  console.log('MODULOS:');
+  console.log('  total:', plataforma.contagens.modulos!==undefined ? plataforma.contagens.modulos : plataforma.modulos);
+  console.log('');
+  console.log('USUARIOS:');
+  console.log('  total:', plataforma.contagens.usuarios!==undefined ? plataforma.contagens.usuarios : plataforma.usuarios);
+  console.log('');
+  console.log('WMS:');
+  console.log('  wms_3cs_v2026:', wms.encontrado ? 'FOUND' : (wms.erro==='RLS_BLOCKED' ? 'RLS_BLOCKED (Platform não autentica anonimamente no wms_kv_store — verifique pelo próprio WMS)' : 'NOT_FOUND'));
+  if(wms.encontrado){
+    console.log('  company_id:', wms.company_id);
+    console.log('  module_id:', wms.module_id);
+    console.log('  value:', wms.valueExiste ? 'EXISTS' : 'EMPTY');
+    console.log('  value_length:', wms.valueLength);
+    console.log('  updated_at:', wms.updatedAt);
+    console.log('  installation_id:', wms.installationId);
+  } else if(wms.erro && wms.erro!=='RLS_BLOCKED'){
+    console.log('  erro:', wms.erro);
+  }
+  console.log('');
+  console.log('PLATFORM:');
+  console.log('  sessão:', SESSION ? (SESSION.user.login+' ('+SESSION.user.role+')') : 'sem sessão');
+  console.log('  empresa ativa (escopo):', escopoEmpresa() || 'todas (Super Admin/Gestor)');
+  console.log('  fonte de dados:', plataforma.source);
+  console.log('%c[/YALOG FINAL STATE]','color:#60a5fa;font-weight:bold;');
+
+  return { plataforma, wms };
+}
+
+// ═══════════════════════════════════════════════════════════════
 // NAVEGAÇÃO
 // ═══════════════════════════════════════════════════════════════
 function go(id){
@@ -2319,6 +2485,7 @@ function filtrarEmpresas(){
     return;
   }
   const podeGerir=can('gerenciarEmpresa');
+  const podeExcluir=can('excluirEmpresaPermanente');
   tb.innerHTML=lista.map(e=>{
     const lic=licMap[e.company_id]||{};
     const status=e.status||'ATIVA';
@@ -2330,6 +2497,13 @@ function filtrarEmpresas(){
         acoesStatus=`<button class="btn btn-r btn-xs" onclick="bloquearEmpresa('${e.company_id}')">Bloquear</button> <button class="btn btn-r btn-xs" onclick="cancelarEmpresa('${e.company_id}')">Cancelar</button>`;
       }
     }
+    // item 10/19 da sprint: Excluir nunca aparece para empresas protegidas,
+    // mesmo para quem tem permissão — a proteção real está em
+    // excluirEmpresaPermanente()/YALOG_EMPRESAS_PROTEGIDAS; isto é só a
+    // UI não oferecer um botão que seria recusado de qualquer forma.
+    const acaoExcluir=(podeExcluir && !YALOG_EMPRESAS_PROTEGIDAS.includes(e.company_id))
+      ? ` <button class="btn btn-r btn-xs" onclick="excluirEmpresaPermanente('${e.company_id}')" title="Exclusão permanente — não pode ser desfeita">Excluir</button>`
+      : '';
     return `<tr>
     <td style="font-family:var(--mono);color:var(--orange2);">${e.company_id}</td>
     <td>${e.razao_social}</td><td style="font-family:var(--mono);">${e.cnpj||'—'}</td>
@@ -2341,7 +2515,7 @@ function filtrarEmpresas(){
       ${podeGerir?`<button class="btn btn-o btn-xs" onclick="editarEmpresa('${e.company_id}')">Editar</button> `:''}
       <button class="btn btn-b btn-xs" onclick="abrirDashboardEmpresa('${e.company_id}')">Dashboard</button>
       ${can('editarLicenca')?` <button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Licença</button>`:''}
-      ${acoesStatus?' '+acoesStatus:''}
+      ${acoesStatus?' '+acoesStatus:''}${acaoExcluir}
     </td>
   </tr>`;
   }).join('');
@@ -2443,6 +2617,74 @@ async function salvarEdicaoEmpresa(){
     fecharModal('mEditarEmpresa'); renderClientes();
   }catch(err){ toast('Erro: '+(err.message||err),'err'); }
 }
+// ═══════════════════════════════════════════════════════════════
+// SPRINT YALOG-PLATFORM-CLEANUP-001 — EXCLUIR EMPRESA (permanente)
+// ═══════════════════════════════════════════════════════════════
+// Item 10/19 da sprint: a documentação anterior já tinha "Cancelar"
+// (bloqueio lógico, ver cancelarEmpresa logo abaixo), mas nenhuma
+// função de exclusão de fato — DB.deleteEmpresaCascata() (novo, no
+// objeto DB) é a única que apaga de verdade. Aqui só a porta de
+// entrada da UI: permissão + proteção hard-coded + confirmação forte.
+// Empresas protegidas — NUNCA excluíveis por esta função, mesmo que
+// alguém tente forçar via console chamando excluirEmpresaPermanente()
+// diretamente. Esta lista é a única fonte de proteção; não depende de
+// nenhum estado carregado do Supabase (que poderia estar incompleto
+// por RLS) para decidir o que é intocável.
+const YALOG_EMPRESAS_PROTEGIDAS = ['YLG-AFD2BC', 'YALOG-CORE'];
+async function excluirEmpresaPermanente(companyId){
+  if(!can('excluirEmpresaPermanente')){ toast('Somente Super Admin pode excluir empresas.','err'); return; }
+  if(YALOG_EMPRESAS_PROTEGIDAS.includes(companyId)){
+    toast('A empresa '+companyId+' é protegida e não pode ser excluída.','err');
+    console.warn('[PLATFORM CLEANUP] Tentativa de excluir empresa protegida bloqueada:', companyId);
+    return;
+  }
+  const e=_empresasCache.find(x=>x.company_id===companyId);
+  if(!e){ toast('Empresa não encontrada','err'); return; }
+
+  // Confirmação forte — digitar o Company ID exatamente (item 19).
+  const digitado = prompt(
+    'Esta operação excluirá PERMANENTEMENTE a empresa "'+e.razao_social+'" ('+companyId+')\n'+
+    'e todos os registros relacionados (licença, módulos, usuários, logs).\n\n'+
+    'Esta ação NÃO PODE SER DESFEITA.\n\n'+
+    'Digite exatamente o Company ID para confirmar: '+companyId
+  );
+  if(digitado !== companyId){
+    toast('Exclusão cancelada — Company ID não confere.', 'err');
+    return;
+  }
+
+  console.log('%c[PLATFORM CLEANUP] Iniciando exclusão de', companyId, 'color:#f87171;font-weight:bold;');
+  try{
+    const resultado = await DB.deleteEmpresaCascata(companyId);
+    console.log('[PLATFORM CLEANUP] EMPRESA REMOVIDA:', resultado.empresa ? companyId : '(falhou — ver erros)');
+    console.log('[PLATFORM CLEANUP] LICENÇAS REMOVIDAS:', resultado.licencas);
+    console.log('[PLATFORM CLEANUP] MÓDULOS REMOVIDOS:', resultado.modulos);
+    console.log('[PLATFORM CLEANUP] USUÁRIOS REMOVIDOS:', resultado.usuarios);
+    console.log('[PLATFORM CLEANUP] LOGS REMOVIDOS:', resultado.logs);
+    if(resultado.erros.length) console.error('[PLATFORM CLEANUP] ERROS:', resultado.erros);
+
+    // Log de auditoria só depois da exclusão (não pode ir para a
+    // empresa que acabou de ser removida) — grava em YALOG-CORE.
+    const responsavel = SESSION?(SESSION.user.nome+' ('+SESSION.user.login+')'):'—';
+    await DB.log('EMPRESA_EXCLUIDA',
+      'Empresa excluída: '+e.razao_social+' ('+companyId+') — Responsável: '+responsavel+
+      ' — Licenças:'+resultado.licencas+' Módulos:'+resultado.modulos+' Usuários:'+resultado.usuarios+' Logs:'+resultado.logs+
+      (resultado.erros.length?' — ERROS:'+resultado.erros.join('; '):''),
+      'YALOG-CORE'
+    ).catch(()=>{});
+
+    if(resultado.erros.length){
+      toast('Exclusão concluída com erros — ver console.', 'err');
+    }else{
+      toast('Empresa '+companyId+' excluída permanentemente.', 'ok');
+    }
+    renderClientes();
+  }catch(err){
+    console.error('[PLATFORM CLEANUP] Falha inesperada na exclusão:', err);
+    toast('Erro ao excluir: '+(err.message||err), 'err');
+  }
+}
+
 // item 9: bloquear nega login (Master/Usuário) em todos os módulos.
 async function bloquearEmpresa(companyId){
   if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
