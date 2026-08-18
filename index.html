@@ -481,7 +481,11 @@ a{color:inherit;text-decoration:none;}
     <p style="text-align:center;font-size:11px;margin-top:12px;"><span style="font-family:var(--mono);color:var(--w40);cursor:pointer;" onclick="recuperarSenha()">Esqueci minha senha</span></p>
     <div style="height:1px;background:var(--border);margin:18px 0;"></div>
     <p style="text-align:center;font-size:10px;color:var(--w40);font-family:var(--mono);">YALOG PLATFORM &middot; 2026</p>
-    <p style="text-align:center;font-size:10px;margin-top:8px;"><span style="font-family:var(--mono);color:var(--w40);cursor:pointer;" onclick="resetarAmbiente()">Resetar ambiente (offline)</span></p>
+    <!-- Sprint YALOG-PLATFORM-005, item 19: link de reset removido da
+         tela de login (não pode ficar exposto como operação normal,
+         acessível a qualquer um sem autenticação). O acesso protegido
+         continua existindo em Configurações → Zona de Risco, com
+         confirmação em duas etapas + digitação de "RESETAR". -->
   </div>
 </div>
 
@@ -584,6 +588,7 @@ a{color:inherit;text-decoration:none;}
             <div><div class="ph-eye">Gestão</div><div class="ph-title">Usuários</div></div>
             <button class="btn btn-p" onclick="abrirModalUsuario()">+ Novo Usuário</button>
           </div>
+          <div id="usrFiltroEmpresaChip"></div>
           <div class="card"><table class="dt"><thead><tr>
             <th>Nome</th><th>Login</th><th>Perfil</th><th>Empresa</th><th>Status</th><th>Ações</th>
           </tr></thead><tbody id="tbUsuarios"></tbody></table></div>
@@ -749,6 +754,33 @@ a{color:inherit;text-decoration:none;}
   <div class="fg"><label>Qtd. Usuários</label><input id="lic_usuarios" type="number" min="1"></div>
   <div class="fg"><label>Qtd. Módulos</label><input id="lic_modulos" type="number" min="0"></div>
   <button class="btn btn-p" style="width:100%;justify-content:center;" onclick="salvarLicenca()">Salvar Licença</button>
+</div></div>
+
+<!-- Sprint YALOG-PLATFORM-005, item 4: modal de exclusão definitiva —
+     substitui o antigo prompt() por uma tela própria, com o texto e a
+     confirmação por digitação exatamente como especificado na sprint. -->
+<div class="mo" id="mExcluirEmpresa"><div class="md">
+  <button class="mc" onclick="fecharModal('mExcluirEmpresa')">&#10005;</button>
+  <div class="mt" style="color:var(--r2, #f87171);">Excluir Empresa</div>
+  <div class="ms">Você está prestes a excluir:</div>
+  <div style="background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);padding:14px 16px;margin:12px 0;">
+    <div id="excEmp_razao" style="font-weight:700;font-size:14px;"></div>
+    <div id="excEmp_companyId" style="font-family:var(--mono);color:var(--orange2);font-size:12px;margin-top:2px;"></div>
+  </div>
+  <div style="font-size:12px;color:var(--w70);line-height:1.7;margin-bottom:12px;">
+    Esta ação excluirá também:
+    <ul style="margin:6px 0 0 18px;padding:0;">
+      <li>Licença</li><li>Módulos</li><li>Usuários vinculados</li><li>Histórico/logs da empresa</li>
+    </ul>
+  </div>
+  <div style="font-size:12px;color:var(--r2, #f87171);font-weight:700;margin-bottom:14px;">Esta operação não poderá ser desfeita.</div>
+  <div class="fg"><label>Digite o Company ID para confirmar</label>
+    <input id="excEmp_confirmInput" autocomplete="off" oninput="validarExcluirEmpresaInput()">
+  </div>
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-o" style="flex:1;justify-content:center;" onclick="fecharModal('mExcluirEmpresa')">Cancelar</button>
+    <button class="btn btn-r" id="excEmp_btnConfirmar" style="flex:1;justify-content:center;" disabled onclick="confirmarExclusaoEmpresa()">Excluir Empresa</button>
+  </div>
 </div></div>
 
 <!-- Sprint YALOG-PLATFORM-006 -->
@@ -977,7 +1009,12 @@ const MENU = [
   { id:'dashboard', label:'Dashboard',     icon:'◱', roles:['SUPER_ADMIN','GESTOR','MASTER','USUARIO'] },
   { id:'clientes',  label:'Empresas',      icon:'🏢', roles:['SUPER_ADMIN','GESTOR'] },
   { id:'usuarios',  label:'Usuários',      icon:'👥', roles:['SUPER_ADMIN','GESTOR','MASTER'] },
-  { id:'licencas',  label:'Licenças',      icon:'📜', roles:['SUPER_ADMIN','GESTOR'] },
+  // Sprint YALOG-PLATFORM-005, item 6: "Licenças" removida do menu —
+  // a gestão efetiva passa a ser pelo botão [LICENÇA] na linha de cada
+  // empresa (abrirModalLicenca), que já existia e continua funcionando
+  // exatamente igual. A tela/renderLicencas() NÃO foi apagada (baixo
+  // risco, reversível) — só deixou de ser um item de navegação.
+  // { id:'licencas',  label:'Licenças',      icon:'📜', roles:['SUPER_ADMIN','GESTOR'] },
   { id:'modulos',   label:'Módulos',       icon:'🧩', roles:['SUPER_ADMIN','GESTOR','MASTER'] },
   { id:'logs',      label:'Logs',          icon:'📋', roles:['SUPER_ADMIN','GESTOR'] },
   { id:'config',    label:'Configurações', icon:'⚙', roles:['SUPER_ADMIN'] },
@@ -1305,6 +1342,14 @@ async function _executarOperacaoSupabase(tabela, operacao, payload, match){
     Object.entries(match||{}).forEach(([k,v])=>{ q=q.eq(k,v); });
     const {error}=await q;
     if(error) throw error;
+  } else if(operacao==='delete'){
+    // SPRINT YALOG-PLATFORM-005, item 17: suporte a DELETE na fila —
+    // mesmo padrão do UPDATE (match vira uma cadeia de .eq()), sem
+    // payload (DELETE não grava campos, só remove pelo match).
+    let q=supabaseClient.from(tabela).delete();
+    Object.entries(match||{}).forEach(([k,v])=>{ q=q.eq(k,v); });
+    const {error}=await q;
+    if(error) throw error;
   }
 }
 async function processarFilaSync(){
@@ -1496,15 +1541,56 @@ const DB = {
     ));
   },
   // ═══════════════════════════════════════════════════════════════
-  // SPRINT YALOG-PLATFORM-CLEANUP-001 — exclusão definitiva de empresa
+  // SPRINT YALOG-PLATFORM-005, item 16 — camada DB ganha DELETE real
   // ═══════════════════════════════════════════════════════════════
-  // Não existia nenhuma função de DELETE em DB até esta sprint (só
-  // add/update). deleteEmpresaCascata() é a única forma programática de
-  // apagar uma empresa e seus registros relacionados — nunca chamada
-  // diretamente pela UI (ver excluirEmpresaPermanente(), que faz a
-  // confirmação forte e a proteção de company_id antes de chegar aqui).
-  // Sempre faz SELECT logo antes de cada DELETE (item 17 da sprint) e
-  // devolve as contagens exatas do que foi (ou seria) removido.
+  // Mesmo padrão de add/update: tenta Supabase, cai para localStorage +
+  // fila em caso de falha real de conexão (withFallback). Cada função
+  // é granular (uma linha por chamada) — a cascata (mais abaixo) só
+  // orquestra chamadas a estas, nunca duplica a lógica de gravação.
+  async deleteUsuario(companyId, login){
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('usuarios').delete().eq('company_id',companyId).eq('login',login); if(error)throw error; },
+      ()=>{ const a=LS.get('usuarios').filter(u=>!(u.company_id===companyId&&u.login===login)); LS.set('usuarios',a); },
+      {tabela:'usuarios', operacao:'delete', match:{company_id:companyId, login:login}}
+    );
+  },
+  async deleteLicenca(companyId){
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('licencas').delete().eq('company_id',companyId); if(error)throw error; },
+      ()=>{ const a=LS.get('licencas').filter(l=>l.company_id!==companyId); LS.set('licencas',a); },
+      {tabela:'licencas', operacao:'delete', match:{company_id:companyId}}
+    );
+  },
+  async deleteModulo(companyId, modulo){
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('modulos').delete().eq('company_id',companyId).eq('modulo',modulo); if(error)throw error; },
+      ()=>{ const a=LS.get('modulos').filter(m=>!(m.company_id===companyId&&m.modulo===modulo)); LS.set('modulos',a); },
+      {tabela:'modulos', operacao:'delete', match:{company_id:companyId, modulo:modulo}}
+    );
+  },
+  async deleteModulosDaEmpresa(companyId){
+    // Bulk — usado só pela cascata (item 3: remover TODOS os módulos
+    // da empresa de uma vez, sem depender de saber cada `modulo` antes).
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('modulos').delete().eq('company_id',companyId); if(error)throw error; },
+      ()=>{ const a=LS.get('modulos').filter(m=>m.company_id!==companyId); LS.set('modulos',a); },
+      {tabela:'modulos', operacao:'delete', match:{company_id:companyId}}
+    );
+  },
+  async deleteLogs(companyId){
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('logs').delete().eq('company_id',companyId); if(error)throw error; },
+      ()=>{ const a=LS.get('logs').filter(l=>l.company_id!==companyId); LS.set('logs',a); },
+      {tabela:'logs', operacao:'delete', match:{company_id:companyId}}
+    );
+  },
+  async deleteEmpresa(companyId){
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('empresas').delete().eq('company_id',companyId); if(error)throw error; },
+      ()=>{ const a=LS.get('empresas').filter(e=>e.company_id!==companyId); LS.set('empresas',a); },
+      {tabela:'empresas', operacao:'delete', match:{company_id:companyId}}
+    );
+  },
   async _selecionarPorEmpresa(tabela, companyId){
     if(OFF()||!supabaseClient) return LS.get(tabela).filter(r=>r.company_id===companyId);
     try{
@@ -1516,62 +1602,48 @@ const DB = {
       return [];
     }
   },
+  // Exclusão em cascata — ordem exata pedida (item 3): módulos → licença
+  // → usuários → logs → empresa. SELECT sempre antes do DELETE
+  // correspondente (item 3/4 da sprint anterior, mantido). Só orquestra
+  // as funções granulares acima — nenhuma lógica de gravação duplicada.
   async deleteEmpresaCascata(companyId){
     const resultado={company_id:companyId, licencas:0, modulos:0, usuarios:0, logs:0, empresa:false, erros:[]};
 
-    // Sempre SELECT antes de qualquer DELETE (item 17) — e é o próprio
-    // resultado do SELECT que decide a contagem reportada, nunca uma
-    // suposição de "quantas linhas o DELETE deveria ter afetado".
-    const [licRows, modRows, usrRows] = await Promise.all([
-      this._selecionarPorEmpresa('licencas', companyId),
+    const [modRows, licRows, usrRows, logRows] = await Promise.all([
       this._selecionarPorEmpresa('modulos', companyId),
+      this._selecionarPorEmpresa('licencas', companyId),
       this._selecionarPorEmpresa('usuarios', companyId),
+      this._selecionarPorEmpresa('logs', companyId),
     ]);
-    const logRows = await this._selecionarPorEmpresa('logs', companyId);
     console.log('[PLATFORM CLEANUP] SELECT prévio — company_id:', companyId,
-      '| licencas:', licRows.length, '| modulos:', modRows.length,
+      '| modulos:', modRows.length, '| licencas:', licRows.length,
       '| usuarios:', usrRows.length, '| logs:', logRows.length);
 
-    const excluirTabela = async (tabela, linhas)=>{
-      if(!linhas.length) return 0;
-      if(OFF()||!supabaseClient){
-        const a=LS.get(tabela).filter(r=>r.company_id!==companyId);
-        LS.set(tabela,a);
-        return linhas.length;
-      }
-      try{
-        const {error}=await supabaseClient.from(tabela).delete().eq('company_id',companyId);
-        if(error) throw error;
-        return linhas.length;
-      }catch(e){
-        resultado.erros.push(tabela+': '+(e.message||e));
-        console.error('[PLATFORM CLEANUP] DELETE falhou em', tabela, 'para', companyId, e);
-        return 0;
-      }
-    };
-
-    resultado.licencas = await excluirTabela('licencas', licRows);
-    resultado.modulos  = await excluirTabela('modulos', modRows);
-    resultado.usuarios = await excluirTabela('usuarios', usrRows);
-    resultado.logs     = await excluirTabela('logs', logRows);
-
-    // Empresa por último — só depois que os relacionados já foram
-    // tratados, para nunca deixar licenças/módulos/usuários órfãos
-    // apontando para um company_id que não existe mais em `empresas`.
-    if(OFF()||!supabaseClient){
-      const a=LS.get('empresas').filter(e=>e.company_id!==companyId);
-      LS.set('empresas',a);
-      resultado.empresa=true;
-    }else{
-      try{
-        const {error}=await supabaseClient.from('empresas').delete().eq('company_id',companyId);
-        if(error) throw error;
-        resultado.empresa=true;
-      }catch(e){
-        resultado.erros.push('empresas: '+(e.message||e));
-        console.error('[PLATFORM CLEANUP] DELETE falhou em empresas para', companyId, e);
-      }
+    // 1) módulos
+    if(modRows.length){
+      try{ await this.deleteModulosDaEmpresa(companyId); resultado.modulos=modRows.length; }
+      catch(e){ resultado.erros.push('modulos: '+(e.message||e)); console.error('[PLATFORM CLEANUP] DELETE falhou em modulos:', e); }
     }
+    // 2) licença
+    if(licRows.length){
+      try{ await this.deleteLicenca(companyId); resultado.licencas=licRows.length; }
+      catch(e){ resultado.erros.push('licencas: '+(e.message||e)); console.error('[PLATFORM CLEANUP] DELETE falhou em licencas:', e); }
+    }
+    // 3) usuários (um a um — cada usuário é uma linha própria, mesma
+    // função usada para excluir um usuário individual)
+    for(const u of usrRows){
+      try{ await this.deleteUsuario(companyId, u.login); resultado.usuarios++; }
+      catch(e){ resultado.erros.push('usuarios('+u.login+'): '+(e.message||e)); console.error('[PLATFORM CLEANUP] DELETE falhou em usuarios:', u.login, e); }
+    }
+    // 4) logs da empresa
+    if(logRows.length){
+      try{ await this.deleteLogs(companyId); resultado.logs=logRows.length; }
+      catch(e){ resultado.erros.push('logs: '+(e.message||e)); console.error('[PLATFORM CLEANUP] DELETE falhou em logs:', e); }
+    }
+    // 5) empresa — sempre por último, só depois que 1-4 já rodaram
+    try{ await this.deleteEmpresa(companyId); resultado.empresa=true; }
+    catch(e){ resultado.erros.push('empresas: '+(e.message||e)); console.error('[PLATFORM CLEANUP] DELETE falhou em empresas:', e); }
+
     return resultado;
   },
 };
@@ -1787,13 +1859,22 @@ function iniciarMonitorConexao(){
 // ═══════════════════════════════════════════════════════════════
 // RESETAR AMBIENTE — apaga todos os dados locais e recria o Super Admin
 // ═══════════════════════════════════════════════════════════════
+// Sprint YALOG-PLATFORM-005, item 19: confirmação reforçada para duas
+// etapas + digitação exata de "RESETAR" — o comportamento de execução
+// em si (abaixo) não foi alterado, só o portão de entrada.
 async function resetarAmbiente(){
-  const ok = confirm(
+  const etapa1 = confirm(
     'Isso vai apagar TODOS os dados locais da Platform\n' +
     '(empresas, usuários, licenças, módulos, logs) e recriar o Super Admin.\n\n' +
     'Deseja continuar?'
   );
-  if(!ok) return;
+  if(!etapa1) return;
+
+  const digitado = prompt('Confirmação final — digite RESETAR (em maiúsculas) para prosseguir:');
+  if(digitado !== 'RESETAR'){
+    toast('Reset cancelado — confirmação não confere.', 'err');
+    return;
+  }
 
   console.log('[YALOG] Reset iniciado');
 
@@ -2346,16 +2427,71 @@ async function diagnosticarEstadoFinalYALog(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// NAVEGAÇÃO
+// NAVEGAÇÃO + ATUALIZAÇÃO CENTRAL (Sprint YALOG-PLATFORM-005, itens 10-15)
 // ═══════════════════════════════════════════════════════════════
-function go(id){
+// SCREEN_RENDERERS é a mesma tabela que go() já usava — só extraída pra
+// escopo de módulo, pra refreshPlatformData() poder reusar sem duplicar.
+const SCREEN_RENDERERS = {dashboard:renderDashboard, clientes:renderClientes, usuarios:renderUsuarios,
+  licencas:renderLicencas, modulos:initModulosScreen, logs:renderLogs, config:renderConfig, perfil:renderPerfil};
+// Container de cada tela que tem uma lista/grid — usado só pelo
+// loading/erro (item 13/14). Dashboard/Config/Perfil não entram aqui
+// de propósito (não são listas de registros; menor risco não mexer).
+const SCREEN_CONTAINER = {
+  clientes:{id:'tbClientes', tipo:'tabela', colspan:8, label:'empresas'},
+  usuarios:{id:'tbUsuarios', tipo:'tabela', colspan:6, label:'usuários'},
+  licencas:{id:'tbLicencas', tipo:'tabela', colspan:7, label:'licenças'},
+  modulos:{id:'gridModulos', tipo:'grid', label:'módulos'},
+  logs:{id:'tbLogs', tipo:'tabela', colspan:4, label:'logs'},
+};
+let CURRENT_SCREEN = 'dashboard';
+
+function _mostrarLoadingTela(id){
+  const c=SCREEN_CONTAINER[id]; if(!c) return;
+  const el=document.getElementById(c.id); if(!el) return;
+  const msg='Carregando '+c.label+'...';
+  el.innerHTML = c.tipo==='tabela'
+    ? `<tr><td colspan="${c.colspan}"><div class="qs-empty">${msg}</div></td></tr>`
+    : `<div class="qs-empty" style="grid-column:1/-1;">${msg}</div>`;
+}
+// item 14: erro nunca apaga a tela — troca só o container da lista por
+// uma mensagem com "Tentar novamente", nunca a tela inteira/navegação.
+function _mostrarErroTela(id){
+  const c=SCREEN_CONTAINER[id]; if(!c) return;
+  const el=document.getElementById(c.id); if(!el) return;
+  const msg='Não foi possível atualizar os dados.';
+  el.innerHTML = c.tipo==='tabela'
+    ? `<tr><td colspan="${c.colspan}"><div class="qs-empty">${msg} <button class="btn btn-o btn-xs" onclick="renderScreen('${id}')">Tentar novamente</button></div></td></tr>`
+    : `<div class="qs-empty" style="grid-column:1/-1;">${msg} <button class="btn btn-o btn-xs" onclick="renderScreen('${id}')">Tentar novamente</button></div>`;
+}
+// Ponto único que qualquer código pode chamar pra (re)renderizar uma
+// tela específica — usado tanto por go() (troca de tela) quanto por
+// refreshPlatformData() (mesma tela, dado novo). Nunca duplica a busca
+// de dados: cada render*() já sabe buscar o que precisa.
+async function renderScreen(id){
+  const fn=SCREEN_RENDERERS[id];
+  if(!fn) return;
+  _mostrarLoadingTela(id);
+  try{
+    await fn();
+  }catch(e){
+    console.error('[YALOG] Falha ao renderizar tela "'+id+'":', e);
+    _mostrarErroTela(id);
+  }
+}
+async function go(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   const el=document.getElementById('s-'+id); if(el)el.classList.add('active');
   document.querySelectorAll('.ni').forEach(n=>n.classList.toggle('active',n.dataset.screen===id));
   {const _sb=document.getElementById('sidebar'); if(_sb) _sb.classList.remove('open');}
-  const R={dashboard:renderDashboard,clientes:renderClientes,usuarios:renderUsuarios,
-    licencas:renderLicencas,modulos:initModulosScreen,logs:renderLogs,config:renderConfig,perfil:renderPerfil};
-  if(R[id])R[id]();
+  CURRENT_SCREEN=id;
+  await renderScreen(id);
+}
+// item 11/15: ponto único que toda operação de escrita chama depois de
+// `await DB.algumaCoisa(...)`, em vez de terminar solto com
+// `renderX();`. Sempre re-renderiza a tela que está na tela agora —
+// nunca uma tela diferente da que o usuário está olhando.
+async function refreshPlatformData(){
+  await renderScreen(CURRENT_SCREEN);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2502,7 +2638,7 @@ function filtrarEmpresas(){
     // excluirEmpresaPermanente()/YALOG_EMPRESAS_PROTEGIDAS; isto é só a
     // UI não oferecer um botão que seria recusado de qualquer forma.
     const acaoExcluir=(podeExcluir && !YALOG_EMPRESAS_PROTEGIDAS.includes(e.company_id))
-      ? ` <button class="btn btn-r btn-xs" onclick="excluirEmpresaPermanente('${e.company_id}')" title="Exclusão permanente — não pode ser desfeita">Excluir</button>`
+      ? ` <button class="btn btn-r btn-xs" onclick="abrirModalExcluirEmpresa('${e.company_id}')" title="Exclusão permanente — não pode ser desfeita">Excluir</button>`
       : '';
     return `<tr>
     <td style="font-family:var(--mono);color:var(--orange2);">${e.company_id}</td>
@@ -2515,6 +2651,8 @@ function filtrarEmpresas(){
       ${podeGerir?`<button class="btn btn-o btn-xs" onclick="editarEmpresa('${e.company_id}')">Editar</button> `:''}
       <button class="btn btn-b btn-xs" onclick="abrirDashboardEmpresa('${e.company_id}')">Dashboard</button>
       ${can('editarLicenca')?` <button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Licença</button>`:''}
+      ${can('liberarModulo')?` <button class="btn btn-b btn-xs" onclick="abrirModulosDaEmpresa('${e.company_id}')">Módulos</button>`:''}
+      ${can('editarUsuario')?` <button class="btn btn-b btn-xs" onclick="abrirUsuariosDaEmpresa('${e.company_id}')">Usuários</button>`:''}
       ${acoesStatus?' '+acoesStatus:''}${acaoExcluir}
     </td>
   </tr>`;
@@ -2571,7 +2709,7 @@ async function salvarCliente(){
     for(const m of MODULOS) await DB.setModulo(companyId,m.id,m.id==='wms'?'LIBERADO':'BLOQUEADO');
     await _auditoriaEmpresa('EMPRESA_CRIADA', emp);
     toast('Empresa criada: '+companyId,'ok');
-    fecharModal('mCliente'); renderClientes();
+    fecharModal('mCliente'); await refreshPlatformData();
   }catch(e){ toast('Erro: '+(e.message||e),'err'); }
 }
 // item 3: editar dados cadastrais — Company ID nunca é campo editável.
@@ -2614,7 +2752,7 @@ async function salvarEdicaoEmpresa(){
     await DB.updateEmpresa(companyId, patch);
     await _auditoriaEmpresa('EMPRESA_EDITADA', {...e, ...patch});
     toast('Empresa atualizada','ok');
-    fecharModal('mEditarEmpresa'); renderClientes();
+    fecharModal('mEditarEmpresa'); await refreshPlatformData();
   }catch(err){ toast('Erro: '+(err.message||err),'err'); }
 }
 // ═══════════════════════════════════════════════════════════════
@@ -2631,7 +2769,12 @@ async function salvarEdicaoEmpresa(){
 // nenhum estado carregado do Supabase (que poderia estar incompleto
 // por RLS) para decidir o que é intocável.
 const YALOG_EMPRESAS_PROTEGIDAS = ['YLG-AFD2BC', 'YALOG-CORE'];
-async function excluirEmpresaPermanente(companyId){
+// Sprint YALOG-PLATFORM-005, item 4: modal real (mExcluirEmpresa, no
+// HTML) substitui o prompt() da sprint anterior — mesma proteção e
+// mesma cascata, só a confirmação passou a ser uma tela própria em vez
+// de uma caixa de diálogo do navegador.
+let _empresaParaExcluir=null;
+function abrirModalExcluirEmpresa(companyId){
   if(!can('excluirEmpresaPermanente')){ toast('Somente Super Admin pode excluir empresas.','err'); return; }
   if(YALOG_EMPRESAS_PROTEGIDAS.includes(companyId)){
     toast('A empresa '+companyId+' é protegida e não pode ser excluída.','err');
@@ -2640,25 +2783,35 @@ async function excluirEmpresaPermanente(companyId){
   }
   const e=_empresasCache.find(x=>x.company_id===companyId);
   if(!e){ toast('Empresa não encontrada','err'); return; }
+  _empresaParaExcluir=e;
+  document.getElementById('excEmp_razao').textContent=e.razao_social;
+  document.getElementById('excEmp_companyId').textContent=e.company_id;
+  document.getElementById('excEmp_confirmInput').value='';
+  document.getElementById('excEmp_confirmInput').placeholder=e.company_id;
+  document.getElementById('excEmp_btnConfirmar').disabled=true;
+  abrirModal('mExcluirEmpresa');
+}
+function validarExcluirEmpresaInput(){
+  const input=document.getElementById('excEmp_confirmInput');
+  const btn=document.getElementById('excEmp_btnConfirmar');
+  btn.disabled = !_empresaParaExcluir || input.value!==_empresaParaExcluir.company_id;
+}
+async function confirmarExclusaoEmpresa(){
+  if(!_empresaParaExcluir) return;
+  const e=_empresaParaExcluir;
+  const companyId=e.company_id;
+  const input=document.getElementById('excEmp_confirmInput');
+  if(input.value!==companyId){ toast('Company ID não confere.','err'); return; }
+  if(YALOG_EMPRESAS_PROTEGIDAS.includes(companyId)){ toast('Empresa protegida.','err'); return; } // defesa em profundidade
 
-  // Confirmação forte — digitar o Company ID exatamente (item 19).
-  const digitado = prompt(
-    'Esta operação excluirá PERMANENTEMENTE a empresa "'+e.razao_social+'" ('+companyId+')\n'+
-    'e todos os registros relacionados (licença, módulos, usuários, logs).\n\n'+
-    'Esta ação NÃO PODE SER DESFEITA.\n\n'+
-    'Digite exatamente o Company ID para confirmar: '+companyId
-  );
-  if(digitado !== companyId){
-    toast('Exclusão cancelada — Company ID não confere.', 'err');
-    return;
-  }
-
+  const btn=document.getElementById('excEmp_btnConfirmar');
+  btn.disabled=true; btn.textContent='Excluindo...';
   console.log('%c[PLATFORM CLEANUP] Iniciando exclusão de', companyId, 'color:#f87171;font-weight:bold;');
   try{
     const resultado = await DB.deleteEmpresaCascata(companyId);
     console.log('[PLATFORM CLEANUP] EMPRESA REMOVIDA:', resultado.empresa ? companyId : '(falhou — ver erros)');
-    console.log('[PLATFORM CLEANUP] LICENÇAS REMOVIDAS:', resultado.licencas);
     console.log('[PLATFORM CLEANUP] MÓDULOS REMOVIDOS:', resultado.modulos);
+    console.log('[PLATFORM CLEANUP] LICENÇAS REMOVIDAS:', resultado.licencas);
     console.log('[PLATFORM CLEANUP] USUÁRIOS REMOVIDOS:', resultado.usuarios);
     console.log('[PLATFORM CLEANUP] LOGS REMOVIDOS:', resultado.logs);
     if(resultado.erros.length) console.error('[PLATFORM CLEANUP] ERROS:', resultado.erros);
@@ -2668,20 +2821,27 @@ async function excluirEmpresaPermanente(companyId){
     const responsavel = SESSION?(SESSION.user.nome+' ('+SESSION.user.login+')'):'—';
     await DB.log('EMPRESA_EXCLUIDA',
       'Empresa excluída: '+e.razao_social+' ('+companyId+') — Responsável: '+responsavel+
-      ' — Licenças:'+resultado.licencas+' Módulos:'+resultado.modulos+' Usuários:'+resultado.usuarios+' Logs:'+resultado.logs+
+      ' — Módulos:'+resultado.modulos+' Licenças:'+resultado.licencas+' Usuários:'+resultado.usuarios+' Logs:'+resultado.logs+
       (resultado.erros.length?' — ERROS:'+resultado.erros.join('; '):''),
       'YALOG-CORE'
     ).catch(()=>{});
 
+    fecharModal('mExcluirEmpresa');
+    _empresaParaExcluir=null;
     if(resultado.erros.length){
       toast('Exclusão concluída com erros — ver console.', 'err');
     }else{
       toast('Empresa '+companyId+' excluída permanentemente.', 'ok');
     }
-    renderClientes();
+    // item 5: sem F5 — recarrega a tela atual (Empresas) e, por
+    // consequência, os números do Dashboard na próxima visita a ele.
+    await refreshPlatformData();
   }catch(err){
     console.error('[PLATFORM CLEANUP] Falha inesperada na exclusão:', err);
     toast('Erro ao excluir: '+(err.message||err), 'err');
+  }finally{
+    btn.textContent='Excluir Empresa';
+    validarExcluirEmpresaInput();
   }
 }
 
@@ -2695,7 +2855,7 @@ async function bloquearEmpresa(companyId){
   await DB.updateEmpresa(companyId, patch);
   await _auditoriaEmpresa('EMPRESA_BLOQUEADA', {...e, ...patch});
   toast('Empresa bloqueada','ok');
-  renderClientes();
+  await refreshPlatformData();
 }
 async function reativarEmpresa(companyId){
   if(!can('gerenciarEmpresa')){ toast('Sem permissão','err'); return; }
@@ -2705,7 +2865,7 @@ async function reativarEmpresa(companyId){
   await DB.updateEmpresa(companyId, patch);
   await _auditoriaEmpresa('EMPRESA_REATIVADA', {...e, ...patch});
   toast('Empresa reativada','ok');
-  renderClientes();
+  await refreshPlatformData();
 }
 // item 8: cancelar cancela automaticamente licenças e módulos — nunca
 // apaga histórico, auditoria, usuários ou a própria empresa.
@@ -2720,7 +2880,7 @@ async function cancelarEmpresa(companyId){
   for(const m of MODULOS) await DB.setModulo(companyId, m.id, 'BLOQUEADO');
   await _auditoriaEmpresa('EMPRESA_CANCELADA', {...e, ...patch});
   toast('Empresa cancelada','ok');
-  renderClientes();
+  await refreshPlatformData();
 }
 // item 4: Dashboard da Empresa — só leitura.
 async function abrirDashboardEmpresa(companyId){
@@ -2755,11 +2915,31 @@ async function abrirDashboardEmpresa(companyId){
 // ═══════════════════════════════════════════════════════════════
 // USUÁRIOS
 // ═══════════════════════════════════════════════════════════════
+// SPRINT YALOG-PLATFORM-005, item 9: quando aberta a partir do botão
+// "Usuários" de uma empresa (abrirUsuariosDaEmpresa), a tela some
+// filtrada só por essa empresa, com um chip removível — reaproveita
+// 100% de renderUsuarios(), sem duplicar a busca/tabela.
+let _filtroUsuariosCompanyId=null;
+function limparFiltroUsuariosEmpresa(){
+  _filtroUsuariosCompanyId=null;
+  renderScreen('usuarios');
+}
+async function abrirUsuariosDaEmpresa(companyId){
+  _filtroUsuariosCompanyId=companyId;
+  await go('usuarios');
+}
 async function renderUsuarios(){
   const usuarios=await DB.usuarios();
   console.log('[YALOG] Usuários carregados:', usuarios.length, OFF()?'(localStorage)':'(Supabase)');
   const escopo=escopoEmpresa();
-  const lista=escopo?usuarios.filter(u=>u.company_id===escopo):usuarios;
+  let lista=escopo?usuarios.filter(u=>u.company_id===escopo):usuarios;
+  if(_filtroUsuariosCompanyId) lista=lista.filter(u=>u.company_id===_filtroUsuariosCompanyId);
+  const chip=document.getElementById('usrFiltroEmpresaChip');
+  if(chip){
+    chip.innerHTML=_filtroUsuariosCompanyId
+      ? `<div style="margin-bottom:12px;"><span class="master-badge">Empresa: ${_filtroUsuariosCompanyId}</span> <button class="btn btn-o btn-xs" onclick="limparFiltroUsuariosEmpresa()">Ver todas ✕</button></div>`
+      : '';
+  }
   const tb=document.getElementById('tbUsuarios');
   if(!lista.length){
     tb.innerHTML = _TABELAS_BLOQUEADAS_RLS['usuarios']
@@ -2775,12 +2955,19 @@ async function renderUsuarios(){
     <td>${u.role!=='SUPER_ADMIN'?`<button class="btn btn-b btn-xs" onclick="abrirModalEditarUsuario('${u.company_id}','${u.login}')">Editar</button> <button class="btn btn-o btn-xs" onclick="toggleUsuario('${u.company_id}','${u.login}')">${u.ativo!==false?'Desativar':'Ativar'}</button>`:'—'}</td>
   </tr>`).join('');
 }
+// item 8: mesmo princípio — reaproveita 100% a tela de Módulos já
+// existente (que já tinha um seletor de empresa), só pré-seleciona.
+async function abrirModulosDaEmpresa(companyId){
+  await go('modulos');
+  const sel=document.getElementById('modClienteSel');
+  if(sel){ sel.value=companyId; await renderModulosCliente(); }
+}
 async function toggleUsuario(companyId,login){
   const usuarios=await DB.usuarios(); const u=usuarios.find(x=>x.company_id===companyId&&x.login===login);
   if(!u)return;
   await DB.updateUsuario(companyId,login,{ativo:u.ativo===false});
   await DB.log('ALTERACAO','Toggle usuário: '+login,companyId);
-  renderUsuarios();
+  await refreshPlatformData();
 }
 async function abrirModalUsuario(){
   if(!can('cadastrarUsuario')){ toast('Sem permissão','err'); return; }
@@ -2826,7 +3013,7 @@ async function salvarUsuario(){
     });
     await DB.log('CADASTRO_USUARIO','Usuário '+login+' ('+role+')',companyId);
     toast('Usuário criado: '+login,'ok');
-    fecharModal('mUsuario'); renderUsuarios();
+    fecharModal('mUsuario'); await refreshPlatformData();
   }catch(e){ toast('Erro: '+(e.message||e),'err'); }
 }
 
@@ -2920,7 +3107,7 @@ async function salvarEdicaoUsuario(){
     await _registrarAuditoriaEdicaoUsuario(loginNovo, companyId, camposAlterados);
     toast('Usuário atualizado','ok');
     fecharModal('mEditarUsuario');
-    renderUsuarios();
+    await refreshPlatformData();
   }catch(e){ toast('Erro: '+(e.message||e),'err'); }
 }
 
@@ -2960,7 +3147,7 @@ async function resetarSenhaUsuario(){
     document.getElementById('senhaTemporariaTexto').textContent=senhaTemp;
     fecharModal('mEditarUsuario');
     abrirModal('mSenhaTemporaria');
-    renderUsuarios();
+    await refreshPlatformData();
   }catch(e){ toast('Erro ao resetar senha: '+(e.message||e),'err'); }
 }
 function copiarSenhaTemporaria(){
@@ -3030,7 +3217,7 @@ async function salvarLicenca(){
   try{
     await DB.updateLicenca(companyId,patch);
     await DB.log('ALTERACAO','Licença atualizada: '+companyId,companyId);
-    toast('Licença salva','ok'); fecharModal('mLicenca'); renderLicencas();
+    toast('Licença salva','ok'); fecharModal('mLicenca'); await refreshPlatformData();
   }catch(e){ toast('Erro: '+(e.message||e),'err'); }
 }
 
@@ -3081,7 +3268,7 @@ async function toggleModulo(companyId,modulo,liberado){
   await DB.setModulo(companyId,modulo,liberado?'BLOQUEADO':'LIBERADO');
   await DB.log('ALTERACAO','Módulo '+modulo+' '+(liberado?'bloqueado':'liberado')+' p/ '+companyId,companyId);
   toast('Módulo '+(liberado?'bloqueado':'liberado'),'ok');
-  renderModulosCliente();
+  await refreshPlatformData();
 }
 
 // ═══════════════════════════════════════════════════════════════
