@@ -604,10 +604,24 @@ a{color:inherit;text-decoration:none;}
 
         <!-- MÓDULOS -->
         <div class="screen" id="s-modulos">
-          <div class="ph"><div><div class="ph-eye">Gestão</div><div class="ph-title">Módulos por <em>Cliente</em></div></div>
-            <select id="modClienteSel" style="max-width:280px;" onchange="renderModulosCliente()"></select></div>
-          <div class="g3" id="gridModulos"></div>
+          <div class="ph">
+            <div><div class="ph-eye">Gestão</div><div class="ph-title">Módulos</div></div>
+            <button class="btn btn-p" onclick="abrirModalNovoModulo()">+ Novo Módulo</button>
+          </div>
+          <div class="card"><table class="dt"><thead><tr>
+            <th>Módulo</th><th>ID</th><th>Versão</th><th>Build</th><th>Status</th><th>Empresas</th><th>Ações</th>
+          </tr></thead><tbody id="tbModulosCatalogo"></tbody></table></div>
         </div>
+
+        <!-- Sprint YALOG-PLATFORM-006, item 16: gestão por empresa —
+             modal simples, aberto pelo botão [MÓDULOS] da linha da
+             empresa. Só módulos ACTIVE aparecem. -->
+        <div class="mo" id="mModulosEmpresa"><div class="md md-wide">
+          <button class="mc" onclick="fecharModal('mModulosEmpresa')">&#10005;</button>
+          <div class="mt">Módulos</div>
+          <div class="ms" id="modEmp_subtitulo"></div>
+          <div class="g3" id="gridModulos" style="margin-top:6px;"></div>
+        </div></div>
 
         <!-- LOGS -->
         <div class="screen" id="s-logs">
@@ -824,6 +838,74 @@ a{color:inherit;text-decoration:none;}
   </div>
 </div></div>
 
+<!-- Sprint YALOG-PLATFORM-006, item 6/7/8: cadastro de novo módulo no
+     Registry. Sempre nasce DRAFT — "Salvar e Publicar" cadastra e já
+     publica em seguida (mesma validação, sem duplicar lógica). -->
+<div class="mo" id="mNovoModulo"><div class="md">
+  <button class="mc" onclick="fecharModal('mNovoModulo')">&#10005;</button>
+  <div class="mt">Novo Módulo</div>
+  <div class="ms">Nasce como DRAFT — publique quando estiver pronto</div>
+  <div class="fg"><label>ID do Módulo *</label><input id="nm_id" placeholder="Ex: patio" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9-]/g,'')"></div>
+  <div class="fg"><label>Nome *</label><input id="nm_nome" placeholder="Ex: GESTÃO DE PÁTIO – CARGA/DESCARGA"></div>
+  <div class="fg"><label>Nome Curto</label><input id="nm_nome_curto" placeholder="Ex: Pátio"></div>
+  <div class="fg"><label>Descrição</label><input id="nm_desc"></div>
+  <div class="fg"><label>Ícone (emoji)</label><input id="nm_icone" placeholder="🧩" value="🧩"></div>
+  <div style="display:flex;gap:10px;">
+    <div class="fg" style="flex:1;"><label>Versão *</label><input id="nm_versao" placeholder="1.0.0" value="1.0.0"></div>
+    <div class="fg" style="flex:1;"><label>Build *</label><input id="nm_build" placeholder="001" value="001"></div>
+  </div>
+  <div class="fg"><label>URL de Execução</label><input id="nm_url_exec" placeholder="https://.../index.html"></div>
+  <div class="fg"><label>URL do Pacote</label><input id="nm_url_pacote" placeholder="https://.../modulo.zip"></div>
+  <div class="fg"><label>URL do Manifest</label><input id="nm_url_manifest" placeholder="https://.../manifest.json"></div>
+  <div class="fg"><label>Versão Mínima da Platform</label><input id="nm_platform_min" value="1.0.0"></div>
+  <div class="fg">
+    <label>Manifest (JSON, opcional)</label>
+    <textarea id="nm_manifest" rows="3" placeholder='{"module_id":"patio","name":"...","version":"1.0.0","build":"001"}'></textarea>
+  </div>
+  <div id="nm_erro" class="login-err" style="display:none;"></div>
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-o" id="nm_btnSalvar" style="flex:1;justify-content:center;" onclick="salvarNovoModulo(false)">Salvar</button>
+    <button class="btn btn-p" id="nm_btnSalvarPublicar" style="flex:1;justify-content:center;" onclick="salvarNovoModulo(true)">Salvar e Publicar</button>
+  </div>
+</div></div>
+
+<!-- item 9/10: gerenciar módulo já cadastrado — ações mudam conforme
+     o status atual (ver renderAcoesGerenciarModulo). -->
+<div class="mo" id="mGerenciarModulo"><div class="md md-wide">
+  <button class="mc" onclick="fecharModal('mGerenciarModulo')">&#10005;</button>
+  <div class="mt" id="gm_titulo">Gerenciar Módulo</div>
+  <div class="ms" id="gm_subtitulo"></div>
+  <input type="hidden" id="gm_moduleId">
+
+  <div style="font-size:10px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--w40);margin:14px 0 8px;">Identificação</div>
+  <div class="fg"><label>Nome</label><input id="gm_nome"></div>
+  <div class="fg"><label>Nome Curto</label><input id="gm_nome_curto"></div>
+  <div class="fg"><label>Descrição</label><input id="gm_desc"></div>
+  <div class="fg"><label>Ícone</label><input id="gm_icone"></div>
+
+  <div style="font-size:10px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--w40);margin:14px 0 8px;">Versão Atual</div>
+  <div style="display:flex;gap:10px;">
+    <div class="fg" style="flex:1;"><label>Versão</label><input id="gm_versao"></div>
+    <div class="fg" style="flex:1;"><label>Build</label><input id="gm_build"></div>
+  </div>
+
+  <div style="font-size:10px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--w40);margin:14px 0 8px;">Execução</div>
+  <div class="fg"><label>URL de Execução</label><input id="gm_url_exec"></div>
+  <div class="fg"><label>URL do Pacote</label><input id="gm_url_pacote"></div>
+  <div class="fg"><label>URL do Manifest</label><input id="gm_url_manifest"></div>
+
+  <div style="font-size:10px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--w40);margin:14px 0 8px;">Compatibilidade</div>
+  <div class="fg"><label>Versão Mínima da Platform</label><input id="gm_platform_min"></div>
+
+  <div id="gm_erro" class="login-err" style="display:none;"></div>
+  <div id="gm_acoes" style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 16px;"></div>
+
+  <div style="border-top:1px solid var(--border2);padding-top:12px;">
+    <div style="font-size:10px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--w40);margin-bottom:8px;">Histórico de Versões (somente leitura)</div>
+    <div id="gm_versoes" style="font-size:12px;color:var(--w60);"></div>
+  </div>
+</div></div>
+
 <!-- SDK do Supabase (Sprint YALOG-PLATFORM-002). Carregado via CDN — se
      não houver internet ou o CDN estiver bloqueado, window.supabase
      simplesmente não existe e a Platform cai para localStorage. -->
@@ -996,7 +1078,14 @@ const ROLES = {
   USUARIO:     'Usuário',
 };
 
-const MODULOS = [
+// Sprint YALOG-PLATFORM-006, item 3/19: este array deixou de ser fonte
+// de verdade — nenhuma tela lê mais dele em runtime. Existe só como
+// semente da migração inicial (migrarModulosParaRegistry, mais abaixo),
+// rodada uma única vez se platform_modules estiver genuinamente vazia.
+// Note que 'patio' NÃO está aqui — este HTML nunca teve 'patio' no
+// array original; o seed do item 19 adiciona 'patio' diretamente,
+// sem depender deste array.
+const _MODULOS_SEED_LEGADO = [
   { id:'wms',       nome:'WMS',       icon:'📦', desc:'Gestão de Armazém completa.' },
   { id:'tms',       nome:'TMS',       icon:'🚚', desc:'Gestão de Transportes e fretes.' },
   { id:'dashboard', nome:'Dashboard', icon:'📊', desc:'Torre de controle de indicadores.' },
@@ -1015,7 +1104,11 @@ const MENU = [
   // exatamente igual. A tela/renderLicencas() NÃO foi apagada (baixo
   // risco, reversível) — só deixou de ser um item de navegação.
   // { id:'licencas',  label:'Licenças',      icon:'📜', roles:['SUPER_ADMIN','GESTOR'] },
-  { id:'modulos',   label:'Módulos',       icon:'🧩', roles:['SUPER_ADMIN','GESTOR','MASTER'] },
+  // Sprint YALOG-PLATFORM-006, item 5: "Módulos" vira o CATÁLOGO
+  // (Registry) global — exclusivo Super Admin. Gestor/Master continuam
+  // liberando/bloqueando módulos por empresa através do botão
+  // [Módulos] na própria linha da empresa, sem precisar deste menu.
+  { id:'modulos',   label:'Módulos',       icon:'🧩', roles:['SUPER_ADMIN'] },
   { id:'logs',      label:'Logs',          icon:'📋', roles:['SUPER_ADMIN','GESTOR'] },
   { id:'config',    label:'Configurações', icon:'⚙', roles:['SUPER_ADMIN'] },
   { id:'perfil',    label:'Perfil',        icon:'👤', roles:['SUPER_ADMIN','GESTOR','MASTER','USUARIO'] },
@@ -1646,6 +1739,61 @@ const DB = {
 
     return resultado;
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // SPRINT YALOG-PLATFORM-006 — MODULE REGISTRY (item 4)
+  // ═══════════════════════════════════════════════════════════════
+  // Nomes de método exatos pedidos na sprint. Mesmo padrão
+  // withFallback de todo o resto do objeto DB — Supabase quando
+  // conectado, localStorage só como fallback/cache (nunca fonte).
+  // Tabelas já existentes no Supabase (não criadas por este código):
+  // platform_modules, platform_module_versions.
+  async modulosCatalogo(){
+    return _lerComProtecaoRLS(withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('platform_modules').select('*').order('name'); if(error)throw error; return data||[]; },
+      ()=> LS.get('platform_modules'),
+      {tabela:'platform_modules'}
+    ));
+  },
+  async getModuloCatalogo(moduleId){
+    const todos = await this.modulosCatalogo();
+    return todos.find(m=>m.module_id===moduleId)||null;
+  },
+  async createModuloCatalogo(payload){
+    const prep=prepararPayload('platform_modules', payload);
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('platform_modules').insert([prep]); if(error)throw error; },
+      ()=>{ const a=LS.get('platform_modules'); a.push(prep); LS.set('platform_modules',a); },
+      {tabela:'platform_modules', operacao:'insert', payload:prep}
+    );
+  },
+  async updateModuloCatalogo(moduleId, patch){
+    patch={...patch, updated_at:new Date().toISOString()};
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('platform_modules').update(patch).eq('module_id',moduleId); if(error)throw error; },
+      ()=>{ const a=LS.get('platform_modules'); const i=a.findIndex(m=>m.module_id===moduleId); if(i>=0) a[i]={...a[i],...patch}; LS.set('platform_modules',a); },
+      {tabela:'platform_modules', operacao:'update', payload:patch, match:{module_id:moduleId}}
+    );
+  },
+  async updateStatusModuloCatalogo(moduleId, status){
+    return this.updateModuloCatalogo(moduleId, {status});
+  },
+  // item 12: histórico — nunca sobrescrito, só acrescentado.
+  async versoesModulo(moduleId){
+    return _lerComProtecaoRLS(withFallback(
+      async ()=>{ const {data,error}=await supabaseClient.from('platform_module_versions').select('*').eq('module_id',moduleId).order('created_at',{ascending:false}); if(error)throw error; return data||[]; },
+      ()=> LS.get('platform_module_versions').filter(v=>v.module_id===moduleId),
+      {tabela:'platform_module_versions'}
+    ));
+  },
+  async addVersaoModulo(payload){
+    const prep=prepararPayload('platform_module_versions', payload);
+    return withFallback(
+      async ()=>{ const {error}=await supabaseClient.from('platform_module_versions').insert([prep]); if(error)throw error; },
+      ()=>{ const a=LS.get('platform_module_versions'); a.push(prep); LS.set('platform_module_versions',a); },
+      {tabela:'platform_module_versions', operacao:'insert', payload:prep}
+    );
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -2107,6 +2255,12 @@ function can(acao){
     verTodasEmpresas:['SUPER_ADMIN','GESTOR'],
     configurar:['SUPER_ADMIN'],
     excluirEmpresaPermanente:['SUPER_ADMIN'],
+    // Sprint YALOG-PLATFORM-006, item 27: gestão do CATÁLOGO global
+    // (cadastrar/publicar/bloquear/reativar/arquivar/nova versão) é
+    // exclusiva do Super Admin. Liberar/bloquear um módulo JÁ
+    // PUBLICADO para uma empresa específica continua em
+    // 'liberarModulo' (Super Admin + Gestor, já existente).
+    gerenciarCatalogoModulos:['SUPER_ADMIN'],
   };
   return (P[acao]||[]).includes(r);
 }
@@ -2534,14 +2688,12 @@ async function renderDashboard(){
     <div class="kc"><span class="ki">⚪</span><div class="kv">${empOffline}</div><div class="kl">Empresas Offline</div></div>
     <div class="kc"><span class="ki">🔴</span><div class="kv" style="color:var(--r2);">${empBloqueadas}</div><div class="kl">Empresas Bloqueadas</div></div>`;
 
-  document.getElementById('dashModulos').innerHTML=MODULOS.map(m=>{
-    const active=m.id==='wms';
-    const badge=active?'<span class="sp sp-lib">Disponível</span>':'<span class="sp sp-pen">Em Desenvolvimento</span>';
-    const info=active?'<p style="font-size:10px;color:var(--w40);margin-top:8px;">Integração na Sprint 002.</p>':'';
-    return `<div class="card" style="padding:16px;"><div style="font-size:22px;">${m.icon}</div>
-      <div style="font-weight:700;margin:6px 0 4px;">${m.nome}</div>
-      <div style="font-size:11px;color:var(--w40);margin-bottom:8px;">${m.desc}</div>${badge}${info}</div>`;
-  }).join('');
+  document.getElementById('dashModulos').innerHTML=(await DB.modulosCatalogo()).map(m=>{
+    const badge=moduleStatusBadge(m.status);
+    return `<div class="card" style="padding:16px;"><div style="font-size:22px;">${m.icon||'🧩'}</div>
+      <div style="font-weight:700;margin:6px 0 4px;">${m.name}</div>
+      <div style="font-size:11px;color:var(--w40);margin-bottom:8px;">${m.description||''}</div>${badge}</div>`;
+  }).join('') || '<div class="qs-empty">Nenhum módulo cadastrado ainda.</div>';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2705,8 +2857,12 @@ async function salvarCliente(){
       company_id:companyId, plano:'FREE', status:'ATIVA', validade:null,
       qtd_usuarios:5, qtd_modulos:1, created_at:new Date().toISOString(),
     });
-    // libera WMS por padrão, demais bloqueados
-    for(const m of MODULOS) await DB.setModulo(companyId,m.id,m.id==='wms'?'LIBERADO':'BLOQUEADO');
+    // libera WMS por padrão, demais bloqueados — só módulos já
+    // publicados (ACTIVE) no catálogo entram no vínculo inicial.
+    const catalogoInicial = await DB.modulosCatalogo();
+    for(const m of catalogoInicial.filter(x=>x.status==='ACTIVE')){
+      await DB.setModulo(companyId, m.module_id, m.module_id==='wms'?'LIBERADO':'BLOQUEADO');
+    }
     await _auditoriaEmpresa('EMPRESA_CRIADA', emp);
     toast('Empresa criada: '+companyId,'ok');
     fecharModal('mCliente'); await refreshPlatformData();
@@ -2877,7 +3033,8 @@ async function cancelarEmpresa(companyId){
   const patch={status:'CANCELADA', updated_at:new Date().toISOString()};
   await DB.updateEmpresa(companyId, patch);
   await DB.updateLicenca(companyId, {status:'CANCELADA'});
-  for(const m of MODULOS) await DB.setModulo(companyId, m.id, 'BLOQUEADO');
+  const catalogoAtual = await DB.modulosCatalogo();
+  for(const m of catalogoAtual) await DB.setModulo(companyId, m.module_id, 'BLOQUEADO');
   await _auditoriaEmpresa('EMPRESA_CANCELADA', {...e, ...patch});
   toast('Empresa cancelada','ok');
   await refreshPlatformData();
@@ -2955,12 +3112,15 @@ async function renderUsuarios(){
     <td>${u.role!=='SUPER_ADMIN'?`<button class="btn btn-b btn-xs" onclick="abrirModalEditarUsuario('${u.company_id}','${u.login}')">Editar</button> <button class="btn btn-o btn-xs" onclick="toggleUsuario('${u.company_id}','${u.login}')">${u.ativo!==false?'Desativar':'Ativar'}</button>`:'—'}</td>
   </tr>`).join('');
 }
-// item 8: mesmo princípio — reaproveita 100% a tela de Módulos já
-// existente (que já tinha um seletor de empresa), só pré-seleciona.
+// Sprint YALOG-PLATFORM-006: a tela "Módulos" virou o Registry global
+// (exclusivo Super Admin) — o toggle por empresa (item 16) agora é um
+// modal próprio, sempre sourced do catálogo dinâmico (só ACTIVE aparece).
 async function abrirModulosDaEmpresa(companyId){
-  await go('modulos');
-  const sel=document.getElementById('modClienteSel');
-  if(sel){ sel.value=companyId; await renderModulosCliente(); }
+  const e=_empresasCache.find(x=>x.company_id===companyId);
+  _empresaModulosAtual=companyId;
+  document.getElementById('modEmp_subtitulo').textContent = companyId+(e?' — '+(e.nome_fantasia||e.razao_social):'');
+  await renderModulosCliente();
+  abrirModal('mModulosEmpresa');
 }
 async function toggleUsuario(companyId,login){
   const usuarios=await DB.usuarios(); const u=usuarios.find(x=>x.company_id===companyId&&x.login===login);
@@ -3222,43 +3382,305 @@ async function salvarLicenca(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MÓDULOS POR CLIENTE
+// MODULE REGISTRY — CATÁLOGO GLOBAL (item 5/6/7/8/9/10/11/12/13/17)
 // ═══════════════════════════════════════════════════════════════
 async function initModulosScreen(){
-  const empresas=await DB.empresas();
-  const escopo=escopoEmpresa();
-  const lista=escopo?empresas.filter(e=>e.company_id===escopo):empresas;
-  const sel=document.getElementById('modClienteSel');
-  sel.innerHTML=lista.map(e=>`<option value="${e.company_id}">${e.company_id} — ${e.nome_fantasia||e.razao_social}</option>`).join('');
-  renderModulosCliente();
+  if(!can('gerenciarCatalogoModulos')){
+    document.getElementById('tbModulosCatalogo').innerHTML='<tr><td colspan="7"><div class="qs-empty">Sem permissão para ver o catálogo de módulos.</div></td></tr>';
+    return;
+  }
+  const catalogo = await DB.modulosCatalogo();
+  console.log('[YALOG] Catálogo de módulos carregado:', catalogo.length, OFF()?'(localStorage)':'(Supabase)');
+  const tb=document.getElementById('tbModulosCatalogo');
+  if(!catalogo.length){
+    tb.innerHTML = _TABELAS_BLOQUEADAS_RLS['platform_modules']
+      ? '<tr><td colspan="7"><div class="qs-empty">🔒 Dados não disponíveis — bloqueio de permissão/RLS.</div></td></tr>'
+      : '<tr><td colspan="7"><div class="qs-empty">Nenhum módulo cadastrado ainda.</div></td></tr>';
+    return;
+  }
+  // item 17: uma única consulta a `modulos` para contar empresas por
+  // módulo — nunca uma consulta por módulo/linha.
+  const vinculos = await DB.modulos();
+  tb.innerHTML=catalogo.map(m=>{
+    const qtdEmpresas = vinculos.filter(v=>v.modulo===m.module_id && v.status==='LIBERADO').length;
+    return `<tr>
+      <td>${m.icon||'🧩'} ${m.name}</td>
+      <td style="font-family:var(--mono);color:var(--orange2);">${m.module_id}</td>
+      <td style="font-family:var(--mono);">${m.version||'—'}</td>
+      <td style="font-family:var(--mono);">${m.build||'—'}</td>
+      <td>${moduleStatusBadge(m.status)}</td>
+      <td>${qtdEmpresas} empresa${qtdEmpresas===1?'':'s'}</td>
+      <td><button class="btn btn-b btn-xs" onclick="abrirModalGerenciarModulo('${m.module_id}')">Gerenciar</button></td>
+    </tr>`;
+  }).join('');
 }
+function moduleStatusBadge(status){
+  const map={
+    DRAFT:'<span class="sp sp-pen">Rascunho</span>',
+    ACTIVE:'<span class="sp sp-lib">Ativo</span>',
+    INACTIVE:'<span class="sp sp-blk">Inativo</span>',
+    BLOCKED:'<span class="sp sp-blk" style="color:var(--r2);">Bloqueado</span>',
+    ARCHIVED:'<span class="sp sp-blk">Arquivado</span>',
+  };
+  return map[status]||status;
+}
+
+// item 6/7/8
+function abrirModalNovoModulo(){
+  if(!can('gerenciarCatalogoModulos')){ toast('Sem permissão','err'); return; }
+  ['nm_id','nm_nome','nm_nome_curto','nm_desc','nm_url_exec','nm_url_pacote','nm_url_manifest','nm_manifest'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('nm_icone').value='🧩';
+  document.getElementById('nm_versao').value='1.0.0';
+  document.getElementById('nm_build').value='001';
+  document.getElementById('nm_platform_min').value='1.0.0';
+  document.getElementById('nm_erro').style.display='none';
+  abrirModal('mNovoModulo');
+}
+function _validarManifestJson(texto, moduleIdEsperado){
+  if(!texto || !texto.trim()) return {ok:true, manifest:null};
+  let m; try{ m=JSON.parse(texto); }catch(e){ return {ok:false, erro:'Manifest inválido: não é um JSON válido.'}; }
+  if(moduleIdEsperado && m.module_id && m.module_id!==moduleIdEsperado){
+    return {ok:false, erro:'Manifest inválido: module_id ("'+m.module_id+'") não bate com o ID informado ("'+moduleIdEsperado+'").'};
+  }
+  return {ok:true, manifest:m};
+}
+// item 25: proteção contra duplo clique nos dois botões deste modal.
+async function salvarNovoModulo(publicarJa){
+  if(!can('gerenciarCatalogoModulos')){ toast('Sem permissão','err'); return; }
+  const moduleId=document.getElementById('nm_id').value.trim();
+  const nome=document.getElementById('nm_nome').value.trim();
+  const nomeCurto=document.getElementById('nm_nome_curto').value.trim();
+  const desc=document.getElementById('nm_desc').value.trim();
+  const icone=document.getElementById('nm_icone').value.trim()||'🧩';
+  const versao=document.getElementById('nm_versao').value.trim();
+  const build=document.getElementById('nm_build').value.trim();
+  const urlExec=document.getElementById('nm_url_exec').value.trim();
+  const urlPacote=document.getElementById('nm_url_pacote').value.trim();
+  const urlManifest=document.getElementById('nm_url_manifest').value.trim();
+  const platformMin=document.getElementById('nm_platform_min').value.trim()||'1.0.0';
+  const manifestTexto=document.getElementById('nm_manifest').value.trim();
+  const errBox=document.getElementById('nm_erro'); errBox.style.display='none';
+
+  // item 6: regras do module_id — obrigatório, formato técnico, único.
+  if(!moduleId || !/^[a-z0-9-]+$/.test(moduleId)){
+    errBox.textContent='ID do Módulo é obrigatório: só letras minúsculas, números e hífen, sem espaços.'; errBox.style.display='block'; return;
+  }
+  if(!nome||!versao||!build){
+    errBox.textContent='Nome, Versão e Build são obrigatórios.'; errBox.style.display='block'; return;
+  }
+  const manifestValidacao=_validarManifestJson(manifestTexto, moduleId);
+  if(!manifestValidacao.ok){ errBox.textContent=manifestValidacao.erro; errBox.style.display='block'; return; }
+  const existente = await DB.getModuloCatalogo(moduleId);
+  if(existente){ errBox.textContent='Já existe um módulo com este ID.'; errBox.style.display='block'; return; }
+
+  const btnSalvar=document.getElementById('nm_btnSalvar'), btnPub=document.getElementById('nm_btnSalvarPublicar');
+  const labelSalvar=btnSalvar.textContent, labelPub=btnPub.textContent;
+  btnSalvar.disabled=true; btnPub.disabled=true;
+  (publicarJa?btnPub:btnSalvar).textContent='Salvando...';
+  try{
+    await DB.createModuloCatalogo({
+      module_id:moduleId, name:nome, short_name:nomeCurto||nome, description:desc,
+      version:versao, build, icon:icone, status:'DRAFT',
+      execution_url:urlExec||null, package_url:urlPacote||null, manifest_url:urlManifest||null,
+      manifest:manifestValidacao.manifest, platform_min_version:platformMin,
+      created_at:new Date().toISOString(), updated_at:new Date().toISOString(),
+      published_at:null, created_by:(SESSION?SESSION.user.login:'—'),
+    });
+    await DB.log('MODULO_CRIADO', 'Módulo cadastrado: '+moduleId+' v'+versao, null);
+    if(publicarJa){
+      await _publicarModuloInterno(moduleId, versao, build, urlExec, urlPacote, manifestValidacao.manifest);
+      toast('Módulo criado e publicado.', 'ok');
+    }else{
+      toast('Módulo criado como DRAFT.', 'ok');
+    }
+    fecharModal('mNovoModulo');
+    await refreshPlatformData();
+  }catch(e){
+    errBox.textContent='Não foi possível salvar o módulo. Verifique a conexão e tente novamente.'; errBox.style.display='block';
+    console.error('[YALOG MODULE REGISTRY]', e);
+  }finally{
+    btnSalvar.disabled=false; btnPub.disabled=false;
+    btnSalvar.textContent=labelSalvar; btnPub.textContent=labelPub;
+  }
+}
+
+// item 9/10: abrir o painel de gestão — as ações mudam conforme status.
+async function abrirModalGerenciarModulo(moduleId){
+  if(!can('gerenciarCatalogoModulos')){ toast('Sem permissão','err'); return; }
+  const m = await DB.getModuloCatalogo(moduleId);
+  if(!m){ toast('Módulo não encontrado','err'); return; }
+  document.getElementById('gm_moduleId').value=moduleId;
+  document.getElementById('gm_titulo').textContent=(m.icon||'🧩')+' '+m.name;
+  document.getElementById('gm_subtitulo').innerHTML='ID: <b style="font-family:var(--mono);color:var(--orange2);">'+moduleId+'</b> · '+moduleStatusBadge(m.status);
+  document.getElementById('gm_nome').value=m.name||'';
+  document.getElementById('gm_nome_curto').value=m.short_name||'';
+  document.getElementById('gm_desc').value=m.description||'';
+  document.getElementById('gm_icone').value=m.icon||'';
+  document.getElementById('gm_versao').value=m.version||'';
+  document.getElementById('gm_build').value=m.build||'';
+  document.getElementById('gm_url_exec').value=m.execution_url||'';
+  document.getElementById('gm_url_pacote').value=m.package_url||'';
+  document.getElementById('gm_url_manifest').value=m.manifest_url||'';
+  document.getElementById('gm_platform_min').value=m.platform_min_version||'';
+  document.getElementById('gm_erro').style.display='none';
+  renderAcoesGerenciarModulo(m.status);
+  await _renderVersoesModulo(moduleId);
+  abrirModal('mGerenciarModulo');
+}
+// item 10: exatamente o mapa de ações por status pedido na sprint.
+// ARCHIVED = somente consulta, sem nenhuma ação destrutiva de histórico.
+function renderAcoesGerenciarModulo(status){
+  const el=document.getElementById('gm_acoes');
+  const btn=(cls,label,fn)=>`<button class="btn ${cls}" onclick="${fn}">${label}</button>`;
+  let html = btn('btn-o','Editar','salvarEdicaoModulo()');
+  if(status==='DRAFT'){
+    html += btn('btn-p','Publicar','publicarModuloRegistry()') + btn('btn-o','Arquivar','arquivarModuloRegistry()');
+  }else if(status==='ACTIVE'){
+    html += btn('btn-p','Nova Versão','publicarModuloRegistry()') + btn('btn-r','Bloquear','bloquearModuloRegistry()');
+  }else if(status==='BLOCKED'||status==='INACTIVE'){
+    html += btn('btn-g','Reativar','reativarModuloRegistry()') + btn('btn-o','Arquivar','arquivarModuloRegistry()');
+  }
+  // ARCHIVED: só o botão Editar acima fica oculto também — consulta pura.
+  if(status==='ARCHIVED') html = '<div style="color:var(--w40);font-size:12px;">Módulo arquivado — somente consulta, sem edição.</div>';
+  el.innerHTML=html;
+}
+async function _renderVersoesModulo(moduleId){
+  const versoes = await DB.versoesModulo(moduleId);
+  const el=document.getElementById('gm_versoes');
+  if(!versoes.length){ el.innerHTML='<div style="color:var(--w40);">Nenhuma versão publicada ainda.</div>'; return; }
+  el.innerHTML=versoes.map(v=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+    <span style="font-family:var(--mono);">v${v.version} · build ${v.build}</span>
+    <span style="color:var(--w40);">${v.published_at?new Date(v.published_at).toLocaleString('pt-BR'):'—'}</span>
+  </div>`).join('');
+}
+async function salvarEdicaoModulo(){
+  if(!can('gerenciarCatalogoModulos')){ toast('Sem permissão','err'); return; }
+  const moduleId=document.getElementById('gm_moduleId').value;
+  const errBox=document.getElementById('gm_erro'); errBox.style.display='none';
+  const patch={
+    name:document.getElementById('gm_nome').value.trim(),
+    short_name:document.getElementById('gm_nome_curto').value.trim(),
+    description:document.getElementById('gm_desc').value.trim(),
+    icon:document.getElementById('gm_icone').value.trim()||'🧩',
+    execution_url:document.getElementById('gm_url_exec').value.trim()||null,
+    package_url:document.getElementById('gm_url_pacote').value.trim()||null,
+    manifest_url:document.getElementById('gm_url_manifest').value.trim()||null,
+    platform_min_version:document.getElementById('gm_platform_min').value.trim()||'1.0.0',
+  };
+  if(!patch.name){ errBox.textContent='Nome é obrigatório.'; errBox.style.display='block'; return; }
+  try{
+    await DB.updateModuloCatalogo(moduleId, patch);
+    await DB.log('MODULO_ATUALIZADO', 'Módulo atualizado: '+moduleId, null);
+    toast('Módulo atualizado.', 'ok');
+    await abrirModalGerenciarModulo(moduleId);
+    await refreshPlatformData();
+  }catch(e){ errBox.textContent='Não foi possível salvar. Verifique a conexão e tente novamente.'; errBox.style.display='block'; console.error('[YALOG MODULE REGISTRY]',e); }
+}
+// item 11: publicar — nunca sobrescreve o histórico, sempre acrescenta
+// um novo registro em platform_module_versions.
+async function _publicarModuloInterno(moduleId, versao, build, urlExec, urlPacote, manifest){
+  const agora=new Date().toISOString();
+  await DB.updateModuloCatalogo(moduleId, {status:'ACTIVE', published_at:agora, version:versao, build});
+  await DB.addVersaoModulo({
+    module_id:moduleId, version:versao, build,
+    package_url:urlPacote||null, execution_url:urlExec||null, manifest:manifest||null,
+    status:'ACTIVE', created_at:agora, published_at:agora,
+    created_by:(SESSION?SESSION.user.login:'—'),
+  });
+  await DB.log('MODULO_PUBLICADO', 'Módulo publicado: '+moduleId+' v'+versao+' build '+build, null);
+}
+async function publicarModuloRegistry(){
+  if(!can('gerenciarCatalogoModulos')){ toast('Sem permissão','err'); return; }
+  const moduleId=document.getElementById('gm_moduleId').value;
+  const versao=document.getElementById('gm_versao').value.trim();
+  const build=document.getElementById('gm_build').value.trim();
+  const urlExec=document.getElementById('gm_url_exec').value.trim();
+  const urlPacote=document.getElementById('gm_url_pacote').value.trim();
+  const errBox=document.getElementById('gm_erro'); errBox.style.display='none';
+  if(!versao||!build){ errBox.textContent='Informe Versão e Build antes de publicar.'; errBox.style.display='block'; return; }
+  if(!urlExec){ errBox.textContent='URL de Execução é obrigatória para publicar.'; errBox.style.display='block'; return; }
+  const btns=document.querySelectorAll('#gm_acoes button'); btns.forEach(b=>b.disabled=true);
+  try{
+    await _publicarModuloInterno(moduleId, versao, build, urlExec, urlPacote, null);
+    toast('Módulo publicado com sucesso.', 'ok');
+    await abrirModalGerenciarModulo(moduleId);
+    await refreshPlatformData();
+  }catch(e){
+    errBox.textContent='Não foi possível publicar o módulo.'; errBox.style.display='block';
+    console.error('[YALOG MODULE REGISTRY]', e);
+  }finally{ btns.forEach(b=>b.disabled=false); }
+}
+async function bloquearModuloRegistry(){
+  if(!can('gerenciarCatalogoModulos')){ toast('Sem permissão','err'); return; }
+  const moduleId=document.getElementById('gm_moduleId').value;
+  const btns=document.querySelectorAll('#gm_acoes button'); btns.forEach(b=>b.disabled=true);
+  try{
+    await DB.updateStatusModuloCatalogo(moduleId, 'BLOCKED');
+    await DB.log('MODULO_BLOQUEADO', 'Módulo bloqueado: '+moduleId, null);
+    toast('Módulo bloqueado.', 'ok');
+    await abrirModalGerenciarModulo(moduleId);
+    await refreshPlatformData();
+  }catch(e){ toast('Erro: '+(e.message||e), 'err'); console.error('[YALOG MODULE REGISTRY]',e); }
+  finally{ btns.forEach(b=>b.disabled=false); }
+}
+async function reativarModuloRegistry(){
+  if(!can('gerenciarCatalogoModulos')){ toast('Sem permissão','err'); return; }
+  const moduleId=document.getElementById('gm_moduleId').value;
+  const btns=document.querySelectorAll('#gm_acoes button'); btns.forEach(b=>b.disabled=true);
+  try{
+    await DB.updateStatusModuloCatalogo(moduleId, 'ACTIVE');
+    await DB.log('MODULO_REATIVADO', 'Módulo reativado: '+moduleId, null);
+    toast('Módulo reativado.', 'ok');
+    await abrirModalGerenciarModulo(moduleId);
+    await refreshPlatformData();
+  }catch(e){ toast('Erro: '+(e.message||e), 'err'); console.error('[YALOG MODULE REGISTRY]',e); }
+  finally{ btns.forEach(b=>b.disabled=false); }
+}
+async function arquivarModuloRegistry(){
+  if(!can('gerenciarCatalogoModulos')){ toast('Sem permissão','err'); return; }
+  const moduleId=document.getElementById('gm_moduleId').value;
+  if(!confirm('Arquivar este módulo? Ele deixa de poder ser liberado para novas empresas, mas o histórico é preservado.')) return;
+  const btns=document.querySelectorAll('#gm_acoes button'); btns.forEach(b=>b.disabled=true);
+  try{
+    await DB.updateStatusModuloCatalogo(moduleId, 'ARCHIVED');
+    await DB.log('MODULO_ARQUIVADO', 'Módulo arquivado: '+moduleId, null);
+    fecharModal('mGerenciarModulo');
+    toast('Módulo arquivado.', 'ok');
+    await refreshPlatformData();
+  }catch(e){ toast('Erro: '+(e.message||e), 'err'); console.error('[YALOG MODULE REGISTRY]',e); }
+  finally{ btns.forEach(b=>b.disabled=false); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// item 14/15/16: MÓDULOS POR EMPRESA — modal aberto a partir da linha
+// da empresa. Regra de segurança (item 15): só módulos com
+// platform_modules.status === 'ACTIVE' aparecem/podem ser liberados —
+// mesmo que o vínculo em `modulos` já esteja LIBERADO de antes, um
+// módulo bloqueado/arquivado no catálogo nunca aparece como disponível.
+// ═══════════════════════════════════════════════════════════════
+let _empresaModulosAtual=null;
 async function renderModulosCliente(){
-  const companyId=document.getElementById('modClienteSel').value;
+  const companyId=_empresaModulosAtual;
   const grid=document.getElementById('gridModulos');
-  if(!companyId){ grid.innerHTML='<div class="qs-empty">Selecione um cliente.</div>'; return; }
-  const modulos=await DB.modulos();
-  console.log('[YALOG] Módulos carregados:', modulos.length, OFF()?'(localStorage)':'(Supabase)');
-  if(_TABELAS_BLOQUEADAS_RLS['modulos']){
-    // Sprint YALOG-PLATFORM-FINAL-TRUTH-001, item 9: sem isto, todo
-    // módulo apareceria como "Bloqueado" (por falta de registro
-    // encontrado) mesmo quando o problema real é falta de permissão
-    // de leitura, não uma decisão de negócio — visualmente idêntico e
-    // enganoso sem este aviso explícito.
+  if(!companyId){ grid.innerHTML='<div class="qs-empty">Nenhuma empresa selecionada.</div>'; return; }
+  const [catalogo, vinculos] = await Promise.all([DB.modulosCatalogo(), DB.modulos()]);
+  console.log('[YALOG] Módulos carregados:', vinculos.length, OFF()?'(localStorage)':'(Supabase)');
+  if(_TABELAS_BLOQUEADAS_RLS['modulos']||_TABELAS_BLOQUEADAS_RLS['platform_modules']){
     grid.innerHTML = '<div class="qs-empty" style="grid-column:1/-1;">🔒 Dados não disponíveis — bloqueio de permissão/RLS.</div>';
     return;
   }
-  grid.innerHTML=MODULOS.map(m=>{
-    const reg=modulos.find(x=>x.company_id===companyId&&x.modulo===m.id);
+  const disponiveis = catalogo.filter(m=>m.status==='ACTIVE');
+  if(!disponiveis.length){ grid.innerHTML='<div class="qs-empty" style="grid-column:1/-1;">Nenhum módulo publicado ainda.</div>'; return; }
+  grid.innerHTML=disponiveis.map(m=>{
+    const reg=vinculos.find(x=>x.company_id===companyId&&x.modulo===m.module_id);
     const liberado=reg&&reg.status==='LIBERADO';
-    const emDev=m.id!=='wms';
     return `<div class="card">
-      <div style="font-size:22px;">${m.icon}</div>
-      <div style="font-weight:700;margin:6px 0 4px;">${m.nome}</div>
-      <div style="font-size:11px;color:var(--w40);margin-bottom:10px;">${m.desc}</div>
-      ${emDev?'<span class="sp sp-pen">Em Desenvolvimento</span>':
-        (liberado?'<span class="sp sp-lib">Liberado</span>':'<span class="sp sp-blk">Bloqueado</span>')}
-      ${(!emDev&&can('liberarModulo'))?`<div style="margin-top:12px;">
-        <button class="btn ${liberado?'btn-r':'btn-g'} btn-xs btn-block" onclick="toggleModulo('${companyId}','${m.id}',${liberado})">
+      <div style="font-size:22px;">${m.icon||'🧩'}</div>
+      <div style="font-weight:700;margin:6px 0 4px;">${m.name}</div>
+      <div style="font-size:11px;color:var(--w40);margin-bottom:10px;">${m.description||''}</div>
+      ${liberado?'<span class="sp sp-lib">Liberado</span>':'<span class="sp sp-blk">Bloqueado</span>'}
+      ${can('liberarModulo')?`<div style="margin-top:12px;">
+        <button class="btn ${liberado?'btn-r':'btn-g'} btn-xs btn-block" onclick="toggleModulo('${companyId}','${m.module_id}',${liberado})">
           ${liberado?'Bloquear':'Liberar'}</button></div>`:''}
     </div>`;
   }).join('');
@@ -3266,9 +3688,9 @@ async function renderModulosCliente(){
 async function toggleModulo(companyId,modulo,liberado){
   if(!can('liberarModulo')){ toast('Sem permissão','err'); return; }
   await DB.setModulo(companyId,modulo,liberado?'BLOQUEADO':'LIBERADO');
-  await DB.log('ALTERACAO','Módulo '+modulo+' '+(liberado?'bloqueado':'liberado')+' p/ '+companyId,companyId);
+  await DB.log(liberado?'MODULO_REMOVIDO_EMPRESA':'MODULO_VINCULADO_EMPRESA','Módulo '+modulo+' '+(liberado?'bloqueado':'liberado')+' p/ '+companyId,companyId);
   toast('Módulo '+(liberado?'bloqueado':'liberado'),'ok');
-  await refreshPlatformData();
+  await renderModulosCliente();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3393,6 +3815,47 @@ async function alterarSenha(){
 // ═══════════════════════════════════════════════════════════════
 // INICIALIZAÇÃO
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// SPRINT YALOG-PLATFORM-006, item 19/33 — MIGRAÇÃO ÚNICA DO CATÁLOGO
+// ═══════════════════════════════════════════════════════════════
+// Só popula platform_modules se ela estiver GENUINAMENTE vazia
+// (platform_modules.length === 0) — nunca sobrescreve, nunca duplica,
+// nunca roda de novo se já houver qualquer registro (mesmo que tenha
+// sido editado manualmente depois). wms e patio nascem ACTIVE (já têm
+// integração real); os demais nascem DRAFT, exatamente como pedido.
+async function migrarModulosParaRegistry(){
+  if(!SUPABASE_ONLINE) return; // só migra com o banco real acessível
+  try{
+    const existentes = await DB.modulosCatalogo();
+    if(existentes && existentes.length){
+      return; // já migrado (ou já cadastrado manualmente) — nunca sobrescreve
+    }
+    console.log('[YALOG] platform_modules vazia — executando seed inicial (uma única vez)...');
+    const seed = [
+      ..._MODULOS_SEED_LEGADO,
+      { id:'patio', nome:'GESTÃO DE PÁTIO – CARGA/DESCARGA', icon:'🚛', desc:'Gestão de pátio, carga e descarga.' },
+    ];
+    const agora=new Date().toISOString();
+    for(const m of seed){
+      const ativo = (m.id==='wms'||m.id==='patio');
+      await DB.createModuloCatalogo({
+        module_id: m.id, name: m.nome, short_name: m.nome, description: m.desc,
+        version: '1.0.0', build: '001', icon: m.icon,
+        status: ativo ? 'ACTIVE' : 'DRAFT',
+        execution_url: null, package_url: null, manifest_url: null, manifest: null,
+        platform_min_version: '1.0.0',
+        created_at: agora, updated_at: agora,
+        published_at: ativo ? agora : null,
+        created_by: 'migracao-006',
+      });
+    }
+    await DB.log('MODULO_CRIADO', 'Seed inicial do catálogo migrado ('+seed.length+' módulos)', null);
+    console.log('[YALOG] Seed inicial do catálogo concluído.');
+  }catch(e){
+    console.error('[YALOG MODULE REGISTRY] Falha ao migrar catálogo inicial — Platform segue funcionando, tente novamente depois:', e);
+  }
+}
+
 (async function init(){
   // ORDEM CRÍTICA: primeiro detectamos se o Supabase responde, depois
   // o seed do Super Admin roda contra o backend correto (Supabase ou
@@ -3441,6 +3904,9 @@ async function alterarSenha(){
   }
   if(SUPABASE_ONLINE) console.log('%cPLATFORM ONLINE — conexão Supabase OK (reconfirmada após seed)','color:#4ade80;font-weight:bold;');
   else console.warn('[YALOG] Supabase genuinamente indisponível — modo offline é contingência real, não estado inicial.');
+
+  try{ await migrarModulosParaRegistry(); }
+  catch(e){ console.error('[YALOG] Migração do catálogo de módulos falhou:', e); }
 
   // Banner de modo (puramente informativo — protegido). Só aparece em
   // modo offline, como diagnóstico para o Super Admin; o restante da
