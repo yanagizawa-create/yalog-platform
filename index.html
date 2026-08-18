@@ -978,6 +978,9 @@ const YALOG_CONFIG = {
 // (Sprint YALOG-PLATFORM-002)
 // ═══════════════════════════════════════════════════════════════
 let supabaseClient = null;
+// Sprint YALOG-PLATFORM-007: canal isolado só de identidade — ver
+// criação mais abaixo e _garantirIdentidadePlatform().
+let supabaseAuthClient = null;
 let SUPABASE_ONLINE = false; // atualizado por testarConexaoSupabase() no init()
 
 function supabaseConfigurado(){
@@ -1006,11 +1009,82 @@ if (!YALOG_CONFIG.FORCAR_OFFLINE && supabaseConfigurado()) {
         YALOG_CONFIG.SUPABASE_ANON_KEY,
         { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
       );
+      // Sprint YALOG-PLATFORM-007: SEGUNDO cliente, completamente
+      // isolado do de cima — usado exclusivamente para provar a
+      // identidade administrativa via Anonymous Auth (ver
+      // _garantirIdentidadePlatform, mais abaixo). NUNCA usado por
+      // DB.*/withFallback/nenhuma leitura ou gravação de dado — por
+      // isso ele pode ter sua própria sessão Auth sem colocar em
+      // risco a decisão da FIX-001 acima. Se algo der errado aqui, o
+      // pior caso é a identidade não ser registrada — o resto da
+      // Platform continua 100% funcional, porque não depende disto.
+      supabaseAuthClient = window.supabase.createClient(
+        YALOG_CONFIG.SUPABASE_URL,
+        YALOG_CONFIG.SUPABASE_ANON_KEY,
+        { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
+      );
     } else {
       console.warn('[YALOG] SDK do Supabase não carregado (sem internet ou CDN bloqueado). Operando offline.');
     }
   } catch (e) {
     console.error('[YALOG] Erro ao iniciar cliente Supabase — operando offline:', e);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SPRINT YALOG-PLATFORM-007 — IDENTIDADE ADMINISTRATIVA VERIFICÁVEL
+   ═══════════════════════════════════════════════════════════════
+   Passo 1: só criava o vínculo no banco, best-effort, nunca bloqueava
+   login. Passo 2: quem decide se a falha bloqueia o login é
+   fazerLogin(), que aguarda o retorno desta função e nega acesso a
+   SUPER_ADMIN/GESTOR se vier false. Passo 3 (esta versão): corrigido
+   para a estrutura OFICIAL confirmada no banco —
+   registrar_identidade_plataforma(p_login, p_senha), gravando em
+   public.platform_staff_installations (a tabela oficial; NUNCA
+   public.instalacoes_da_equipe_da_plataforma, que existe mas não deve
+   ser usada). Esta função só prova/registra a identidade, nunca
+   decide sozinha se o login prossegue — quem decide é fazerLogin().
+   Nenhuma policy RLS foi alterada ainda (isso fica para uma sprint
+   futura, dedicada só a isso — as `anon ALL/true` continuam
+   intocadas).
+   ═══════════════════════════════════════════════════════════════ */
+async function _garantirIdentidadePlatform(login, senha){
+  // Sprint YALOG-PLATFORM-007, Passo 4 (diagnóstico): o retorno passou
+  // de boolean puro para {ok, motivo} — a PROTEÇÃO não mudou em nada
+  // (fazerLogin() continua negando acesso sempre que ok!==true), só
+  // passou a ser possível saber POR QUAL das 3 causas plausíveis a
+  // identidade não foi confirmada, em vez de um "false" mudo. Nenhum
+  // bypass, nenhuma nova permissão — só visibilidade do motivo real.
+  if(!supabaseAuthClient) return {ok:false, motivo:'sem-cliente-auth'};
+  try{
+    const {data, error:authErr} = await supabaseAuthClient.auth.signInAnonymously();
+    if(authErr || !data || !data.user){
+      console.warn('[YALOG IDENTITY] Anonymous Sign-In (canal de identidade) falhou:', authErr && authErr.message);
+      return {ok:false, motivo:'signin-anonimo-falhou', detalhe: authErr && authErr.message};
+    }
+    // Sprint YALOG-PLATFORM-007, Passo 3: a função oficial recebe a
+    // senha em texto puro (p_senha), não o hash — é ela quem valida
+    // no banco, não o cliente. Isso nunca sai do canal HTTPS do
+    // Supabase, e nunca toca/altera public.usuarios (só lê pra
+    // comparar). Ver YALOG-PLATFORM-007-passo3-entrega.md, seção 2,
+    // sobre a implicação de segurança dessa mudança de p_senha_hash
+    // para p_senha.
+    const {error} = await supabaseAuthClient.rpc('registrar_identidade_plataforma', {
+      p_login: login, p_senha: senha,
+    });
+    if(error){
+      // Passo 2: um retorno não-ok aqui é reportado ao chamador
+      // (fazerLogin()) como falha real — não é best-effort. Este
+      // console.warn é só diagnóstico; quem decide bloquear o login
+      // é fazerLogin().
+      console.warn('[YALOG IDENTITY] registrar_identidade_plataforma falhou:', error.message);
+      return {ok:false, motivo:'rpc-falhou', detalhe: error.message};
+    }
+    console.log('[YALOG IDENTITY] Identidade administrativa registrada para', login);
+    return {ok:true, motivo:null};
+  }catch(e){
+    console.warn('[YALOG IDENTITY] exceção ao registrar identidade:', e);
+    return {ok:false, motivo:'excecao', detalhe: e && e.message};
   }
 }
 
@@ -2153,6 +2227,50 @@ async function fazerLogin(){
         return;
       }
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // SPRINT YALOG-PLATFORM-007, PASSO 2 — identidade administrativa
+    // passa a ser CONDIÇÃO de acesso (não mais best-effort/fire-and-
+    // forget) para SUPER_ADMIN/GESTOR. Roda ANTES de
+    // _gravarSessaoCompartilhada()/DB.log('LOGIN') — se falhar, nada
+    // disso chega a acontecer, exatamente como os outros motivos de
+    // negação de login já fazem nesta mesma função (empresa bloqueada
+    // acima). MASTER/USUARIO nunca passam por aqui — são clientes do
+    // Ecosystem, não administração YALog, e continuam com o fluxo
+    // 100% inalterado.
+    //
+    // supabaseAuthClient continua isolado do supabaseClient de sempre
+    // (Sprint 007, Passo 1) — nada aqui muda como DB.*/withFallback
+    // fala com o Supabase; só decide se a TELA administrativa abre.
+    //
+    // CONSEQUÊNCIA REAL, deliberadamente pedida nesta sprint: se o
+    // Supabase estiver indisponível ou Anonymous Sign-In estiver
+    // desligado no projeto, SUPER_ADMIN/GESTOR NÃO conseguem mais
+    // entrar — a Platform deixa de ter um modo 100% offline para a
+    // equipe interna. Isso é uma mudança de comportamento real em
+    // relação ao que existia antes desta sprint (ver relatório).
+    if(usuario.role==='SUPER_ADMIN' || usuario.role==='GESTOR'){
+      const identidade = await _garantirIdentidadePlatform(login, senha);
+      if(!identidade.ok){
+        SESSION=null;
+        // Sprint YALOG-PLATFORM-007, Passo 4: mensagem diferenciada por
+        // categoria — mesma proteção de antes (acesso continua negado
+        // em qualquer motivo), só ficou possível saber qual das 3
+        // causas plausíveis ocorreu, sem expor detalhe técnico sensível
+        // na tela (o "detalhe" completo só vai pro console/log).
+        const MENSAGENS = {
+          'sem-cliente-auth': 'Não foi possível iniciar o canal de identidade administrativa (SDK do Supabase indisponível).',
+          'signin-anonimo-falhou': 'Não foi possível confirmar sua identidade administrativa: autenticação anônima indisponível. Verifique se "Anonymous Sign-Ins" está habilitado no projeto Supabase, e sua conexão com a internet.',
+          'rpc-falhou': 'Não foi possível confirmar sua identidade administrativa: o servidor recusou a validação. Verifique o console para detalhes.',
+          'excecao': 'Não foi possível confirmar sua identidade administrativa (erro inesperado). Verifique o console para detalhes.',
+        };
+        toast(MENSAGENS[identidade.motivo] || 'Não foi possível confirmar sua identidade administrativa. Verifique sua conexão e tente novamente.', 'err');
+        await DB.log('FALHA','Identidade administrativa não confirmada: '+login+' — motivo: '+identidade.motivo+(identidade.detalhe?' ('+identidade.detalhe+')':''), usuario.company_id);
+        return;
+      }
+      console.log('[YALOG IDENTITY] Identidade administrativa confirmada para', login);
+    }
+
     const empresaDoUsuario=empresasAtuais.find(e=>e.company_id===usuario.company_id);
     _gravarSessaoCompartilhada(usuario, empresaDoUsuario?empresaDoUsuario.razao_social:usuario.company_id);
     await DB.log('LOGIN','Login: '+login,usuario.company_id);
