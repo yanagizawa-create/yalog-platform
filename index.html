@@ -947,6 +947,14 @@ const YALOG_CONFIG = {
 
   COMPANY_PREFIX: 'YLG',
 
+  // Sprint YALOG-ECOSYSTEM-003, item D: base da URL publicada do
+  // yalog-ecosystem.html — usada só para montar o link exclusivo por
+  // empresa (?empresa=YLG-XXXXXX). Atualize aqui quando o Ecosystem
+  // for publicado de fato; até lá, o botão "Link do Cliente" mostra
+  // o valor construído com este placeholder, claramente identificável
+  // como não-definitivo.
+  ECOSYSTEM_URL: 'https://SEU-DOMINIO-AQUI/yalog-ecosystem/',
+
   // A Platform detecta sozinha se o Supabase está disponível:
   //  • URL/chave preenchidas + conexão responde  → modo SUPABASE
   //  • Caso contrário (não configurado, sem internet, erro de rede,
@@ -2922,6 +2930,7 @@ function filtrarEmpresas(){
       <button class="btn btn-b btn-xs" onclick="abrirDashboardEmpresa('${e.company_id}')">Dashboard</button>
       ${can('editarLicenca')?` <button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Licença</button>`:''}
       ${can('liberarModulo')?` <button class="btn btn-b btn-xs" onclick="abrirModulosDaEmpresa('${e.company_id}')">Módulos</button>`:''}
+      ${podeGerir?` <button class="btn btn-o btn-xs" onclick="copiarLinkClienteEmpresa('${e.company_id}')" title="Copiar o link exclusivo do Client Ecosystem para esta empresa">Link do Cliente</button>`:''}
       ${can('editarUsuario')?` <button class="btn btn-b btn-xs" onclick="abrirUsuariosDaEmpresa('${e.company_id}')">Usuários</button>`:''}
       ${acoesStatus?' '+acoesStatus:''}${acaoExcluir}
     </td>
@@ -3239,6 +3248,23 @@ async function abrirModulosDaEmpresa(companyId){
   document.getElementById('modEmp_subtitulo').textContent = companyId+(e?' — '+(e.nome_fantasia||e.razao_social):'');
   await renderModulosCliente();
   abrirModal('mModulosEmpresa');
+}
+// Sprint YALOG-ECOSYSTEM-003, item 4/6/D: "link exclusivo" da empresa
+// é o mesmo yalog-ecosystem.html publicado, com ?empresa=<company_id>
+// — nunca um arquivo/ambiente separado por cliente. Só monta e copia
+// a URL; não autentica nem autoriza nada (isso continua exigindo
+// login+senha reais no próprio Ecosystem).
+async function copiarLinkClienteEmpresa(companyId){
+  const base = (YALOG_CONFIG.ECOSYSTEM_URL||'').replace(/\/?$/, '/');
+  const link = base + '?empresa=' + encodeURIComponent(companyId);
+  try{
+    await navigator.clipboard.writeText(link);
+    toast('Link copiado: '+link, 'ok');
+  }catch(e){
+    // Alguns navegadores/contextos bloqueiam a Clipboard API — mostra
+    // o link pra copiar manualmente em vez de falhar silenciosamente.
+    prompt('Copie o link do Client Ecosystem desta empresa:', link);
+  }
 }
 async function toggleUsuario(companyId,login){
   const usuarios=await DB.usuarios(); const u=usuarios.find(x=>x.company_id===companyId&&x.login===login);
