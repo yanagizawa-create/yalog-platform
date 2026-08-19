@@ -623,6 +623,21 @@ a{color:inherit;text-decoration:none;}
           <div class="g3" id="gridModulos" style="margin-top:6px;"></div>
         </div></div>
 
+        <!-- Sprint YALOG-ECOSYSTEM-006, item 6: modal do Link do Cliente -->
+        <div class="mo" id="mLinkCliente"><div class="md">
+          <button class="mc" onclick="fecharModal('mLinkCliente')">&#10005;</button>
+          <div class="mt">Link do Cliente</div>
+          <div class="ms">Endereço exclusivo do Client Ecosystem para esta empresa</div>
+          <div class="fg"><label>Empresa</label><div id="lc_empresa" style="font-weight:700;"></div></div>
+          <div class="fg"><label>Company ID</label><div id="lc_companyId" style="font-family:var(--mono);color:var(--orange2);"></div></div>
+          <div class="fg"><label>Link do cliente</label><input id="lc_link" readonly onclick="this.select()"></div>
+          <div style="display:flex;gap:10px;">
+            <button class="btn btn-p" style="flex:1;justify-content:center;" onclick="copiarLinkClienteAtual()">Copiar Link</button>
+            <button class="btn btn-o" style="flex:1;justify-content:center;" onclick="abrirLinkClienteAtual()">Abrir</button>
+            <button class="btn btn-o" style="flex:1;justify-content:center;" onclick="fecharModal('mLinkCliente')">Fechar</button>
+          </div>
+        </div></div>
+
         <!-- LOGS -->
         <div class="screen" id="s-logs">
           <div class="ph"><div><div class="ph-eye">Auditoria</div><div class="ph-title">Logs do <em>Sistema</em></div></div>
@@ -936,6 +951,12 @@ a{color:inherit;text-decoration:none;}
    a Platform em modo online.
    ═══════════════════════════════════════════════════════════════ */
 
+// Sprint YALOG-ECOSYSTEM-006, item 5: URL real e definitiva do
+// Client Ecosystem publicado — usada só para montar o link exclusivo
+// por empresa (?empresa=YLG-XXXXXX). Nome de constante exato pedido
+// pela sprint.
+const ECOSYSTEM_BASE_URL = 'https://yanagizawa-create.github.io/yalog-ecosystem/';
+
 const YALOG_CONFIG = {
   // Projeto Supabase da YALog Platform (Sprint YALOG-PLATFORM-003).
   //   Project URL             → SUPABASE_URL
@@ -946,14 +967,6 @@ const YALOG_CONFIG = {
   SUPABASE_ANON_KEY: 'sb_publishable_iHBh-BZsjisQc0i09QUDoQ_9mZl1vfk',
 
   COMPANY_PREFIX: 'YLG',
-
-  // Sprint YALOG-ECOSYSTEM-003, item D: base da URL publicada do
-  // yalog-ecosystem.html — usada só para montar o link exclusivo por
-  // empresa (?empresa=YLG-XXXXXX). Atualize aqui quando o Ecosystem
-  // for publicado de fato; até lá, o botão "Link do Cliente" mostra
-  // o valor construído com este placeholder, claramente identificável
-  // como não-definitivo.
-  ECOSYSTEM_URL: 'https://SEU-DOMINIO-AQUI/yalog-ecosystem/',
 
   // A Platform detecta sozinha se o Supabase está disponível:
   //  • URL/chave preenchidas + conexão responde  → modo SUPABASE
@@ -2930,7 +2943,7 @@ function filtrarEmpresas(){
       <button class="btn btn-b btn-xs" onclick="abrirDashboardEmpresa('${e.company_id}')">Dashboard</button>
       ${can('editarLicenca')?` <button class="btn btn-b btn-xs" onclick="abrirModalLicenca('${e.company_id}')">Licença</button>`:''}
       ${can('liberarModulo')?` <button class="btn btn-b btn-xs" onclick="abrirModulosDaEmpresa('${e.company_id}')">Módulos</button>`:''}
-      ${podeGerir?` <button class="btn btn-o btn-xs" onclick="copiarLinkClienteEmpresa('${e.company_id}')" title="Copiar o link exclusivo do Client Ecosystem para esta empresa">Link do Cliente</button>`:''}
+      ${podeGerir?` <button class="btn btn-o btn-xs" onclick="abrirModalLinkCliente('${e.company_id}')" title="Ver/copiar o link exclusivo do Client Ecosystem para esta empresa">Link do Cliente</button>`:''}
       ${can('editarUsuario')?` <button class="btn btn-b btn-xs" onclick="abrirUsuariosDaEmpresa('${e.company_id}')">Usuários</button>`:''}
       ${acoesStatus?' '+acoesStatus:''}${acaoExcluir}
     </td>
@@ -3249,22 +3262,40 @@ async function abrirModulosDaEmpresa(companyId){
   await renderModulosCliente();
   abrirModal('mModulosEmpresa');
 }
-// Sprint YALOG-ECOSYSTEM-003, item 4/6/D: "link exclusivo" da empresa
-// é o mesmo yalog-ecosystem.html publicado, com ?empresa=<company_id>
-// — nunca um arquivo/ambiente separado por cliente. Só monta e copia
-// a URL; não autentica nem autoriza nada (isso continua exigindo
-// login+senha reais no próprio Ecosystem).
-async function copiarLinkClienteEmpresa(companyId){
-  const base = (YALOG_CONFIG.ECOSYSTEM_URL||'').replace(/\/?$/, '/');
-  const link = base + '?empresa=' + encodeURIComponent(companyId);
+// Sprint YALOG-ECOSYSTEM-006, item 5/6: "link exclusivo" da empresa é
+// o mesmo yalog-ecosystem.html publicado, com ?empresa=<company_id>
+// — nunca um arquivo/ambiente separado por cliente. O botão da linha
+// da empresa agora abre um modal com Empresa/Company ID/Link e os 3
+// botões pedidos (COPIAR LINK/ABRIR/FECHAR), em vez de copiar direto
+// sem o usuário ver a URL antes. Nada aqui autentica ou autoriza —
+// isso continua exigindo login+senha reais no próprio Ecosystem.
+let _linkClienteAtual = null;
+function abrirModalLinkCliente(companyId){
+  const e = _empresasCache.find(x=>x.company_id===companyId);
+  if(!e){ toast('Empresa não encontrada','err'); return; }
+  const base = ECOSYSTEM_BASE_URL.replace(/\/?$/, '/');
+  const clientUrl = `${base}?empresa=${encodeURIComponent(companyId)}`;
+  _linkClienteAtual = clientUrl;
+  document.getElementById('lc_empresa').textContent = e.razao_social;
+  document.getElementById('lc_companyId').textContent = companyId;
+  document.getElementById('lc_link').value = clientUrl;
+  abrirModal('mLinkCliente');
+}
+async function copiarLinkClienteAtual(){
+  if(!_linkClienteAtual) return;
   try{
-    await navigator.clipboard.writeText(link);
-    toast('Link copiado: '+link, 'ok');
+    await navigator.clipboard.writeText(_linkClienteAtual);
+    toast('Link copiado.', 'ok');
   }catch(e){
-    // Alguns navegadores/contextos bloqueiam a Clipboard API — mostra
-    // o link pra copiar manualmente em vez de falhar silenciosamente.
-    prompt('Copie o link do Client Ecosystem desta empresa:', link);
+    // Alguns navegadores/contextos bloqueiam a Clipboard API — o campo
+    // já está com o link selecionável na tela, então isso é só um aviso.
+    document.getElementById('lc_link').select();
+    toast('Não foi possível copiar automaticamente — selecione e copie manualmente.', 'err');
   }
+}
+function abrirLinkClienteAtual(){
+  if(!_linkClienteAtual) return;
+  window.open(_linkClienteAtual, '_blank');
 }
 async function toggleUsuario(companyId,login){
   const usuarios=await DB.usuarios(); const u=usuarios.find(x=>x.company_id===companyId&&x.login===login);
