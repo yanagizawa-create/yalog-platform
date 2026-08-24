@@ -3187,6 +3187,7 @@ async function abrirDashboardEmpresa(companyId){
   const lic=licencas.find(l=>l.company_id===companyId)||{};
   const usuarios=(await DB.usuarios()).filter(u=>u.company_id===companyId);
   const modulos=(await DB.modulos()).filter(m=>m.company_id===companyId);
+  const catalogoModulos=await DB.modulosCatalogo();
   const logs=(await DB.logs()).filter(l=>l.company_id===companyId);
   const ultimoAcesso=logs.filter(l=>l.tipo==='LOGIN').sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
 
@@ -3198,7 +3199,7 @@ async function abrirDashboardEmpresa(companyId){
     ['Company ID', e.company_id],
     ['Licença', lic.status||'ATIVA'],
     ['Plano', lic.plano||'FREE'],
-    ['Qtd. Módulos', modulos.filter(m=>m.status==='LIBERADO').length+' / '+MODULOS.length],
+    ['Qtd. Módulos', modulos.filter(m=>m.status==='LIBERADO').length+' / '+catalogoModulos.length],
     ['Usuários Ativos', usuarios.filter(u=>u.ativo!==false).length],
     ['Usuários Inativos', usuarios.filter(u=>u.ativo===false).length],
     ['Data de Criação', fmtData(e.created_at)],
