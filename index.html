@@ -3754,9 +3754,17 @@ async function salvarEdicaoModulo(){
 }
 // item 11: publicar — nunca sobrescreve o histórico, sempre acrescenta
 // um novo registro em platform_module_versions.
+// SPRINT YALOG-PLATFORM-URL-001: o patch do catálogo (platform_modules)
+// não incluía execution_url/package_url/manifest — só o histórico
+// recebia esses campos. Por isso a URL sumia ao reabrir o módulo:
+// abrirModalGerenciarModulo() lê de DB.getModuloCatalogo() (o
+// catálogo), não do histórico. Corrigido para persistir nos dois.
 async function _publicarModuloInterno(moduleId, versao, build, urlExec, urlPacote, manifest){
   const agora=new Date().toISOString();
-  await DB.updateModuloCatalogo(moduleId, {status:'ACTIVE', published_at:agora, version:versao, build});
+  await DB.updateModuloCatalogo(moduleId, {
+    status:'ACTIVE', published_at:agora, version:versao, build,
+    execution_url:urlExec||null, package_url:urlPacote||null,
+  });
   await DB.addVersaoModulo({
     module_id:moduleId, version:versao, build,
     package_url:urlPacote||null, execution_url:urlExec||null, manifest:manifest||null,
