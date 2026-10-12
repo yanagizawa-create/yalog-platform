@@ -2202,9 +2202,6 @@ async function fazerLogin(){
     console.log('[YALOG] company_id:', usuario.company_id);
 
     const senhaHash=await hashSenha(senha);
-    console.log('[YALOG] hash informado:', senhaHash);
-    console.log('[YALOG] hash salvo:', usuario.senha_hash);
-    console.log('[YALOG] comparação:', senhaHash===usuario.senha_hash ? 'IGUAIS' : 'DIFERENTES');
 
     if(usuario.senha_hash!==senhaHash){
       // Sprint YALOG-PLATFORM-FINAL-TRUTH-001, item 6: removido o
