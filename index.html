@@ -2174,10 +2174,30 @@ async function fazerLogin(){
     // pessoa decidir.
     let usuarios=await DB.usuarios();
     const loginSA = String((YALOG_CONFIG.SUPER_ADMIN||{}).login||'').trim().toLowerCase();
-    // Busca robusta (case-insensitive, sem espaços)
-    let usuario=usuarios.find(u=>String(u.login).trim().toLowerCase()===login);
+    // Resolucao defensiva: contas de tenants diferentes podem compartilhar login.
+    // Se houver varias, selecionamos apenas uma correspondencia exata de credencial.
+    const candidatos=usuarios.filter(u=>String(u.login||'').trim().toLowerCase()===login);
+    const senhaHash=await hashSenha(senha);
+    let usuario=null;
+    if(candidatos.length===1){
+      usuario=candidatos[0];
+    }else if(candidatos.length>1){
+      const correspondencias=candidatos.filter(u=>u.senha_hash===senhaHash);
+      if(correspondencias.length===1){
+        usuario=correspondencias[0];
+      }else if(correspondencias.length>1){
+        console.warn('[YALOG SECURITY] Login ambiguo: mais de uma conta corresponde a esta credencial.');
+        toast('Acesso bloqueado por segurança: este login está vinculado a mais de uma empresa com a mesma credencial. Solicite a regularização ao administrador.','err');
+        await DB.log('FALHA','Login ambiguo entre empresas: '+login);
+        return;
+      }else{
+        toast('Login ou senha inválidos','err');
+        await DB.log('FALHA','Credenciais inválidas para login com múltiplas contas: '+login);
+        return;
+      }
+    }
 
-    if(!usuario && login===loginSA && loginSA){
+    if(!usuario && candidatos.length===0 && login===loginSA && loginSA){
       console.warn('[PLATFORM RECOVERY] Super Admin não localizado em '+usuarios.length+' registro(s) — acionando recuperação automática controlada.');
       const rec = await recuperarSuperAdmin(senha);
       if(rec.ok){
@@ -2200,8 +2220,6 @@ async function fazerLogin(){
     console.log('[YALOG] login encontrado:', usuario.login);
     console.log('[YALOG] role:', usuario.role);
     console.log('[YALOG] company_id:', usuario.company_id);
-
-    const senhaHash=await hashSenha(senha);
 
     if(usuario.senha_hash!==senhaHash){
       // Sprint YALOG-PLATFORM-FINAL-TRUTH-001, item 6: removido o
